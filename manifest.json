@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "id": "io.github.hex0x90.proximity",
-  "name": "Proximity Lock",
+  "name": "Bluetooth Proximity Lock",
   "version": "1.0.0",
   "author": "hex0x90",
   "license": "MIT",
-  "description": "Keeps your Omarchy computer awake while your phone is nearby and locks immediately when you walk away.",
+  "description": "Auto-lock your screen when you walk away with your phone, and keep it awake while you're nearby. Bluetooth proximity — no app on the phone required.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Proximity Lock",
-    "description": "Automatic lock and stay-awake management based on your phone's Bluetooth proximity.",
+    "description": "Auto-lock and keep-awake driven by your phone's Bluetooth proximity.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
