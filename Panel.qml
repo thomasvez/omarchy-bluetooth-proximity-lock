@@ -58,6 +58,10 @@ Panel {
   readonly property string instanceId: Math.random().toString(36).slice(2) + "-" + Date.now()
   Component.onDestruction: Model.releasePollLease(root.instanceId)
 
+  // Where the probe writes its latest result. Per-user (runtime dir), one file
+  // for the plugin; every widget copy watches it so their displays agree.
+  readonly property string stateFilePath: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/omarchy-proximity.json"
+
   // Injected by BarWidget.qml: the bar button this popup anchors to, and the
   // bar-widget root that stands in as the popout identity. The bar tracks the
   // widget mounted in its slot (BarWidget.qml), not this nested panel, so
@@ -95,11 +99,43 @@ Panel {
       Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
       "--probe", root.targetMac,
       "--threshold", String(root.rssiThreshold),
-      "--scan-window", String(root.scanWindowSeconds)
+      "--scan-window", String(root.scanWindowSeconds),
+      "--state-file", root.stateFilePath
     ]
     probeProcess.running = true
   }
 
+  function runHelper(arg) {
+    actionProcess.command = [
+      "python3",
+      Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
+      arg
+    ]
+    actionProcess.running = true
+  }
+
+  // Side effects for a near<->away transition. Only ever called by the copy
+  // that holds the poll lease, so notifications and the lock fire exactly once
+  // no matter how many monitors (and therefore widget copies) exist.
+  function applyTransition(nowNear) {
+    if (nowNear) {
+      runHelper("--stay-awake")
+      if (root.notifyOnStateChange)
+        // execArgv, not bar.run: bar.run() feeds the string to `bash -lc`.
+        // The messages are static, but keeping them off the shell means a
+        // later edit that interpolates a device name (attacker-controlled
+        // Bluetooth advertising data) can't become command execution.
+        Util.execArgv(["omarchy-notification-send", "📱 Phone in range", "Computer stay-awake activated"])
+    } else {
+      runHelper(root.immediateLock ? "--lock" : "--allow-idle")
+      if (root.notifyOnStateChange)
+        Util.execArgv(["omarchy-notification-send", "📱 Phone away", "Omarchy locked"])
+    }
+  }
+
+  // The probe writes its result to stateFilePath; every widget copy (one per
+  // monitor) watches that file so all of them show the same state, while only
+  // the lease holder actually ran the probe and drives the transition effects.
   function handleProbeResult(data) {
     if (!root.pluginEnabled) return
 
@@ -116,54 +152,23 @@ Panel {
       nowNear = true
     } else {
       root.missedChecks++
-      if (root.missedChecks < root.awayGraceCount && wasNear) {
-        nowNear = true
-      } else {
-        nowNear = false
-      }
+      nowNear = (root.missedChecks < root.awayGraceCount && wasNear)
     }
 
-    if (nowNear !== wasNear || root.isFirstCheck) {
+    // Fresh == this instance's own probe just wrote it, not a stale file left
+    // over from a previous session (which must never drive a lock on startup).
+    var fresh = data.ts && (Date.now() / 1000 - data.ts) < Math.max(30, root.pollIntervalSeconds * 3)
+
+    var transition = (nowNear !== wasNear)
+    if (transition || root.isFirstCheck) {
       root.isNear = nowNear
       root.isFirstCheck = false
-
-      if (nowNear) {
-        actionProcess.command = [
-          "python3",
-          Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
-          "--stay-awake"
-        ]
-        actionProcess.running = true
-
-        if (root.notifyOnStateChange) {
-          // execArgv, not bar.run: bar.run() feeds the string to `bash -lc`.
-          // These messages are static, but keeping them off the shell means a
-          // later edit that interpolates a device name (attacker-controlled
-          // Bluetooth advertising data) can't become command execution.
-          Util.execArgv(["omarchy-notification-send", "📱 Phone in range", "Computer stay-awake activated"])
-        }
-      } else {
-        if (root.immediateLock) {
-          actionProcess.command = [
-            "python3",
-            Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
-            "--lock"
-          ]
-          actionProcess.running = true
-        } else {
-          actionProcess.command = [
-            "python3",
-            Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
-            "--allow-idle"
-          ]
-          actionProcess.running = true
-        }
-
-        if (root.notifyOnStateChange) {
-          Util.execArgv(["omarchy-notification-send", "📱 Phone away", "Omarchy locked"])
-        }
-      }
     }
+    // Act only on a genuine flip (so a transient "away" as the very first
+    // reading after startup can't lock the screen), only on a fresh result,
+    // and only from the copy that holds the poll lease.
+    if (transition && fresh && Model.holdsPollLease(root.instanceId))
+      root.applyTransition(nowNear)
   }
 
   function refreshDevices() {
@@ -195,12 +200,7 @@ Panel {
   }
 
   function lockNow() {
-    actionProcess.command = [
-      "python3",
-      Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
-      "--lock"
-    ]
-    actionProcess.running = true
+    root.runHelper("--lock")
     root.close()
   }
 
@@ -217,20 +217,25 @@ Panel {
     onTriggered: root.triggerProximityCheck()
   }
 
+  // Runs the probe (lease holder only). Its result is consumed from the shared
+  // state file below, not stdout, so every widget copy sees the same thing.
   Process {
     id: probeProcess
-    stdout: SplitParser {
-      onRead: function(line) {
-        try {
-          var parsed = JSON.parse(line)
-          root.handleProbeResult(parsed)
-        } catch (e) {}
-      }
-    }
   }
 
   Process {
     id: actionProcess
+  }
+
+  FileView {
+    id: stateFile
+    path: root.stateFilePath
+    watchChanges: true
+    printErrors: false
+    onFileChanged: stateFile.reload()
+    onLoaded: {
+      try { root.handleProbeResult(JSON.parse(stateFile.text())) } catch (e) {}
+    }
   }
 
   Process {

@@ -30,6 +30,13 @@ function releasePollLease(id) {
   }
 }
 
+// Read-only check: does this instance currently hold the lease? Used to gate
+// the side effects (notify / lock / stay-awake) so they fire once, while the
+// shared state file keeps every widget copy's display in sync.
+function holdsPollLease(id) {
+  return _leaseHolder === id
+}
+
 function plainText(str) {
   if (str === null || str === undefined) return ""
   return String(str).replace(/<[^>]*>/g, "")

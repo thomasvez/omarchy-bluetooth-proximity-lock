@@ -6,6 +6,7 @@ Provides fast, unprivileged Bluetooth queries and Omarchy idle control.
 
 import sys
 import os
+import time
 import json
 import subprocess
 import argparse
@@ -203,6 +204,8 @@ def main():
     parser.add_argument("--threshold", type=int, default=-78, help="RSSI threshold in dBm")
     parser.add_argument("--scan-window", type=int, default=0,
                         help="Seconds of BLE discovery to refresh RSSI when the device is not connected (0 = off)")
+    parser.add_argument("--state-file", type=str, default="",
+                        help="Also write the --probe result here (atomically) so every widget copy can read it")
     parser.add_argument("--stay-awake", action="store_true", help="Set Omarchy to stay awake")
     parser.add_argument("--allow-idle", action="store_true", help="Allow Omarchy to idle")
     parser.add_argument("--lock", action="store_true", help="Trigger Omarchy lock screen")
@@ -214,7 +217,17 @@ def main():
         print(json.dumps(devices))
     elif args.probe:
         res = probe_device(args.probe, threshold=args.threshold, scan_window=args.scan_window)
-        print(json.dumps(res))
+        res["ts"] = time.time()
+        payload = json.dumps(res)
+        print(payload)
+        if args.state_file:
+            try:
+                tmp = args.state_file + ".tmp"
+                with open(tmp, "w") as fh:
+                    fh.write(payload)
+                os.replace(tmp, args.state_file)
+            except OSError:
+                pass
     elif args.stay_awake:
         set_omarchy_stay_awake(True)
         print(json.dumps({"stayAwake": True}))
