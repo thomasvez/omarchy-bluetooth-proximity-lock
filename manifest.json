@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.hex0x90.proximity",
   "name": "Bluetooth Proximity Lock",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "author": "hex0x90",
   "license": "MIT",
   "description": "Auto-lock your screen when you walk away with your phone, and keep it awake while you're nearby. Bluetooth proximity — no app on the phone required.",
