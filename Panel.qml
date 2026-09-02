@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -10,7 +9,7 @@ import "Model.js" as Model
 Panel {
   id: root
   moduleName: "io.github.hex0x90.proximity"
-  ipcTarget: "io.github.hex0x90.proximity"
+  ipcTarget: "proximity"
   manageIpc: false
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
@@ -18,7 +17,7 @@ Panel {
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-  // Settings from shell.json
+  // Settings
   readonly property string targetMac: Model.plainText(setting("targetMac", ""))
   readonly property string targetName: Model.plainText(setting("targetName", ""))
   readonly property int rssiThreshold: parseInt(setting("rssiThreshold", -78), 10) || -78
@@ -28,7 +27,7 @@ Panel {
   readonly property bool notifyOnStateChange: setting("notifyOnStateChange", true) !== false
   readonly property bool pluginEnabled: setting("enabled", true) !== false
 
-  // Live Proximity State
+  // Live State
   property bool isNear: false
   property bool isConnected: false
   property var currentRssi: null
@@ -38,10 +37,15 @@ Panel {
   property var pairedDevices: []
   property bool loadingDevices: false
 
+  function toggle() {
+    if (root.opened) root.close()
+    else root.open()
+  }
+
   function triggerProximityCheck() {
     if (!root.pluginEnabled || !root.targetMac) return
     if (probeProcess.running) return
-    
+
     probeProcess.command = [
       "python3",
       Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
@@ -151,15 +155,11 @@ Panel {
     root.close()
   }
 
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
-
   onOpenedChanged: if (opened) {
     root.refreshDevices()
-    root.triggerProximityCheck()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
-  // Periodic proximity poll
   Timer {
     interval: root.pollIntervalSeconds * 1000
     running: root.pluginEnabled && root.targetMac !== ""
@@ -200,63 +200,49 @@ Panel {
   }
 
   IpcHandler {
-    target: root.ipcTarget
+    target: "io.github.hex0x90.proximity"
     function open(): void { root.open() }
     function close(): void { root.close() }
     function toggle(): void { root.toggle() }
-    function check(): void { root.triggerProximityCheck() }
-    function lockNow(): void { root.lockNow() }
-    function status(): string {
-      return JSON.stringify({
-        enabled: root.pluginEnabled,
-        targetMac: root.targetMac,
-        targetName: root.targetName,
-        near: root.isNear,
-        connected: root.isConnected,
-        rssi: root.currentRssi,
-        missedChecks: root.missedChecks
-      })
-    }
+    function lock(): void { root.lockNow() }
+    function refresh(): void { root.triggerProximityCheck(); root.refreshDevices() }
   }
 
-  // ---- Bar Widget Button
+  // --- Slim Bar Button ---
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-
     text: {
       if (!root.pluginEnabled) return "📱 ⏸"
       if (!root.targetMac) return "📱 ⚙"
-      if (root.isNear) return "📱 🔓"
-      return "📱 🔒"
+      return root.isNear ? "📱 🔓" : "📱 🔒"
     }
-
-    foreground: {
-      if (!root.pluginEnabled || !root.targetMac) return root.bar ? root.bar.barForeground : Color.foreground
-      if (root.isNear) return Qt.color("#2ecc71")
-      return Qt.color("#e74c3c")
+    color: {
+      if (!root.pluginEnabled) return Qt.darker(root.foreground, 1.6)
+      if (!root.targetMac) return root.dim
+      return root.isNear ? "#2ecc71" : "#e74c3c"
     }
-
-    tooltipText: Model.tooltipMessage(
-      root.pluginEnabled,
-      root.targetName || root.targetMac,
-      root.isNear,
-      root.currentRssi,
-      root.isConnected,
-      root.missedChecks,
-      root.awayGraceCount
-    )
-
-    onPressed: function(b) {
-      if (!root.bar) return
-      if (b === Qt.RightButton) root.lockNow()
-      else if (b === Qt.MiddleButton) root.triggerProximityCheck()
-      else root.toggle()
+    tooltipText: {
+      if (!root.pluginEnabled) return "Proximity Lock: Paused (Click to configure)"
+      if (!root.targetMac) return "Proximity Lock: No device selected (Click to configure)"
+      var name = root.targetName ? root.targetName : root.targetMac
+      var rssiInfo = (root.currentRssi !== null) ? (" (" + root.currentRssi + " dBm)") : ""
+      return name + ": " + (root.isNear ? "In range" : "Away") + rssiInfo + " • Click for settings, Right-click to lock"
+    }
+    onPressed: function(buttonCode) {
+      if (buttonCode === Qt.RightButton) {
+        root.lockNow()
+      } else {
+        root.toggle()
+      }
     }
   }
 
-  // ---- Dropdown Panel Surface
+  // --- Dropdown Panel Surface ---
   KeyboardPanel {
     id: panel
     anchorItem: button
@@ -264,52 +250,81 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(360))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(520))
+    contentWidth: panel.fittedContentWidth(Style.space(380))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(520))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       onCloseRequested: root.close()
-      onTabRequested: function (direction) { root.switchPanel(direction) }
+      onTabRequested: function(direction) { root.switchPanel(direction) }
 
       Flickable {
-        id: flick
+        id: panelFlick
         anchors.fill: parent
         contentWidth: width
-        contentHeight: panelColumn.implicitHeight
+        contentHeight: column.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
         interactive: contentHeight > height
 
         Column {
-          id: panelColumn
-          width: flick.width
+          id: column
+          width: panelFlick.width
           spacing: Style.space(12)
 
           PanelHero {
             width: parent.width
-            title: root.targetName !== "" ? root.targetName : (root.targetMac !== "" ? root.targetMac : "Proximity Lock")
-            meta: !root.pluginEnabled ? "Proximity detection paused"
-              : !root.targetMac ? "No phone selected — tap a paired device below"
-              : root.isNear ? ("Nearby (" + (root.currentRssi !== null ? root.currentRssi + " dBm" : "Active") + ") • Stay-Awake")
-              : "Out of range • Screen locked"
+            title: root.targetName ? root.targetName : (root.targetMac ? root.targetMac : "Proximity Lock")
+            meta: !root.pluginEnabled ? "Proximity tracking paused" : (root.isNear ? "Phone in range • Computer awake" : "Phone away • Computer locked")
             foreground: root.foreground
             fontFamily: root.fontFamily
             iconOpacity: root.isNear ? 1.0 : 0.6
+            iconComponent: Component {
+              Text {
+                textFormat: Text.PlainText
+                text: "📱"
+                font.pixelSize: Style.font.displayLarge
+              }
+            }
           }
 
-          // Section 1: Signal Meter
+          // 2. Proximity Signal Meter
           Column {
             width: parent.width
-            spacing: Style.space(6)
+            spacing: Style.space(8)
             visible: root.targetMac !== ""
 
             PanelSectionHeader {
-              text: "PROXIMITY SIGNAL"
+              text: "SIGNAL STRENGTH"
               foreground: root.foreground
               fontFamily: root.fontFamily
+            }
+
+            Row {
+              width: parent.width
+              Item {
+                width: parent.width - rssiVal.implicitWidth
+                height: rssiVal.implicitHeight
+                Text {
+                  textFormat: Text.PlainText
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.isNear ? "Connected / In Range" : "Out of Range"
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+              }
+              Text {
+                id: rssiVal
+                textFormat: Text.PlainText
+                text: root.currentRssi !== null ? (root.currentRssi + " dBm") : (root.isConnected ? "Active" : "—")
+                color: root.isNear ? "#2ecc71" : "#e74c3c"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
             }
 
             Rectangle {
@@ -321,12 +336,13 @@ Panel {
               Rectangle {
                 height: parent.height
                 radius: parent.radius
-                width: parent.width * (Model.rssiToPercent(root.currentRssi) / 100.0)
+                width: Math.max(0, Math.min(parent.width, parent.width * (Model.rssiToPercent(root.currentRssi) / 100.0)))
                 color: root.isNear ? "#2ecc71" : "#e74c3c"
               }
             }
 
-            RowLayout {
+            // Sensitivity Chips
+            Row {
               width: parent.width
               spacing: Style.space(6)
 
@@ -337,7 +353,7 @@ Panel {
                   { label: "Far (-88 dBm)", val: -88 }
                 ]
                 delegate: Rectangle {
-                  Layout.fillWidth: true
+                  width: Math.max(80, (column.width - Style.space(12)) / 3)
                   height: Style.space(26)
                   radius: Style.space(4)
                   color: (root.rssiThreshold === modelData.val) ? Color.accent : (chipMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.05))
@@ -351,6 +367,7 @@ Panel {
                   }
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: modelData.label
                     font.family: root.fontFamily
@@ -363,21 +380,26 @@ Panel {
             }
           }
 
-          // Section 2: Paired Devices
+          // 3. Paired Devices List
           Column {
             width: parent.width
-            spacing: Style.space(6)
+            spacing: Style.space(8)
 
-            RowLayout {
+            Item {
               width: parent.width
+              height: secHead.implicitHeight
+
               PanelSectionHeader {
+                id: secHead
                 text: "PAIRED BLUETOOTH DEVICES"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-                Layout.fillWidth: true
               }
 
               Text {
+                textFormat: Text.PlainText
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
                 text: root.loadingDevices ? "Scanning..." : "Refresh ↻"
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -393,7 +415,7 @@ Panel {
             Repeater {
               model: root.pairedDevices
               delegate: Rectangle {
-                width: parent.width
+                width: column.width
                 height: Style.space(34)
                 radius: Style.space(5)
                 color: (root.targetMac === modelData.mac) ? Qt.rgba(0.2, 0.6, 1.0, 0.2) : (devMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(1, 1, 1, 0.03))
@@ -408,38 +430,46 @@ Panel {
                   onClicked: root.selectDevice(modelData.mac, modelData.name)
                 }
 
-                RowLayout {
-                  anchors.fill: parent
+                Row {
+                  anchors.left: parent.left
                   anchors.leftMargin: Style.space(8)
+                  anchors.right: statusTxt.left
                   anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
                   spacing: Style.space(8)
 
                   Text {
+                    textFormat: Text.PlainText
                     text: modelData.icon === "audio-headphones" ? "🎧" : (modelData.icon === "input-mouse" ? "🖱" : "📱")
                     font.pixelSize: Style.font.body
                   }
 
                   Text {
+                    textFormat: Text.PlainText
                     text: modelData.name
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.body
                     color: root.foreground
-                    Layout.fillWidth: true
                     elide: Text.ElideRight
                   }
+                }
 
-                  Text {
-                    text: (root.targetMac === modelData.mac) ? "✓ Active" : (modelData.connected ? "Connected" : "Paired")
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    color: (root.targetMac === modelData.mac) ? Color.accent : (modelData.connected ? "#2ecc71" : root.dim)
-                  }
+                Text {
+                  id: statusTxt
+                  textFormat: Text.PlainText
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: (root.targetMac === modelData.mac) ? "✓ Selected" : (modelData.connected ? "Connected" : "Paired")
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  color: (root.targetMac === modelData.mac) ? Color.accent : (modelData.connected ? "#2ecc71" : root.dim)
                 }
               }
             }
           }
 
-          // Section 3: Lock Controls
+          // 4. Quick Toggles
           Column {
             width: parent.width
             spacing: Style.space(8)
@@ -450,7 +480,6 @@ Panel {
               fontFamily: root.fontFamily
             }
 
-            // Immediate Lock Toggle
             Rectangle {
               width: parent.width
               height: Style.space(32)
@@ -463,30 +492,30 @@ Panel {
                 onClicked: root.updateSetting("immediateLock", !root.immediateLock)
               }
 
-              RowLayout {
-                anchors.fill: parent
+              Text {
+                textFormat: Text.PlainText
+                anchors.left: parent.left
                 anchors.leftMargin: Style.space(8)
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Immediate lock when away"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                color: root.foreground
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.right: parent.right
                 anchors.rightMargin: Style.space(8)
-
-                Text {
-                  text: "Immediate lock when away"
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  color: root.foreground
-                  Layout.fillWidth: true
-                }
-
-                Text {
-                  text: root.immediateLock ? "Enabled" : "Disabled"
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  color: root.immediateLock ? Color.accent : root.dim
-                }
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.immediateLock ? "Enabled" : "Disabled"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                color: root.immediateLock ? Color.accent : root.dim
               }
             }
 
-            // Pause Toggle
             Rectangle {
               width: parent.width
               height: Style.space(32)
@@ -499,34 +528,35 @@ Panel {
                 onClicked: root.updateSetting("enabled", !root.pluginEnabled)
               }
 
-              RowLayout {
-                anchors.fill: parent
+              Text {
+                textFormat: Text.PlainText
+                anchors.left: parent.left
                 anchors.leftMargin: Style.space(8)
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Proximity detection active"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                color: root.foreground
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.right: parent.right
                 anchors.rightMargin: Style.space(8)
-
-                Text {
-                  text: "Proximity detection active"
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  color: root.foreground
-                  Layout.fillWidth: true
-                }
-
-                Text {
-                  text: root.pluginEnabled ? "Active" : "Paused"
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  color: root.pluginEnabled ? "#2ecc71" : "#e74c3c"
-                }
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.pluginEnabled ? "Active" : "Paused"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                color: root.pluginEnabled ? "#2ecc71" : "#e74c3c"
               }
             }
           }
 
-          // Section 4: Lock Now Action
+          // 5. Lock Button
           Rectangle {
             width: parent.width
-            height: Style.space(32)
+            height: Style.space(34)
             radius: Style.space(5)
             color: lockMouse.containsMouse ? Qt.rgba(0.9, 0.3, 0.2, 0.25) : Qt.rgba(0.9, 0.3, 0.2, 0.12)
             border.color: "#e74c3c"
@@ -541,6 +571,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "🔒 Lock Computer Now"
               font.family: root.fontFamily

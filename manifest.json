@@ -10,7 +10,7 @@
     "bar-widget"
   ],
   "entryPoints": {
-    "barWidget": "Panel.qml"
+    "barWidget": "BarWidget.qml"
   },
   "barWidget": {
     "displayName": "Proximity Lock",
@@ -19,8 +19,8 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "targetMac": "",
-      "targetName": "",
+      "targetMac": "AA:BB:CC:11:22:33",
+      "targetName": "My Phone",
       "rssiThreshold": -78,
       "pollIntervalSeconds": 4,
       "awayGraceCount": 3,
@@ -34,6 +34,13 @@
         "type": "string",
         "label": "Phone Bluetooth MAC Address",
         "description": "MAC address of your paired phone (e.g. AA:BB:CC:DD:EE:FF).",
+        "defaultValue": ""
+      },
+      {
+        "key": "targetName",
+        "type": "string",
+        "label": "Phone Name",
+        "description": "Display name of the paired phone.",
         "defaultValue": ""
       },
       {
