@@ -48,6 +48,10 @@ Panel {
   property var currentRssi: null
   property int missedChecks: 0
   property bool isFirstCheck: true
+  // The configured device isn't known to Bluetooth at all (unpaired / removed
+  // / adapter off). That's a configuration problem, not a "walked away" event,
+  // so it must not drive the auto-lock.
+  property bool deviceMissing: false
 
   property var pairedDevices: []
   property bool loadingDevices: false
@@ -138,6 +142,21 @@ Panel {
   // the lease holder actually ran the probe and drives the transition effects.
   function handleProbeResult(data) {
     if (!root.pluginEnabled) return
+
+    // Device unknown to BlueZ (unpaired, removed, adapter powered off). Surface
+    // it, drop any stay-awake hold we had for it, but never lock — the user
+    // didn't walk away, they changed a Bluetooth setting.
+    if (data.status === "not_found" || data.status === "no_device") {
+      if (!root.deviceMissing && root.isNear && Model.holdsPollLease(root.instanceId))
+        root.runHelper("--allow-idle")
+      root.deviceMissing = true
+      root.isConnected = false
+      root.currentRssi = null
+      root.isNear = false
+      root.missedChecks = 0
+      return
+    }
+    root.deviceMissing = false
 
     var wasNear = root.isNear
     var nowNear = false
@@ -288,15 +307,17 @@ Panel {
           PanelHero {
             width: parent.width
             title: root.targetName ? root.targetName : (root.targetMac ? root.targetMac : "Proximity Lock")
-            meta: !root.pluginEnabled ? "Proximity tracking paused" : (root.isNear ? "Phone in range • Computer awake" : "Phone away • Computer locked")
+            meta: !root.pluginEnabled ? "Proximity tracking paused"
+                  : root.deviceMissing ? "Not found in Bluetooth • tracking paused"
+                  : (root.isNear ? "Phone in range • Computer awake" : "Phone away • Computer locked")
             foreground: root.foreground
             fontFamily: root.fontFamily
-            iconOpacity: root.isNear ? 1.0 : 0.6
+            iconOpacity: (root.isNear && !root.deviceMissing) ? 1.0 : 0.6
             iconComponent: Component {
               Text {
                 textFormat: Text.PlainText
-                text: !root.pluginEnabled ? "󰦝" : (root.isNear ? "󰄜" : "󰦞")
-                color: !root.pluginEnabled ? root.dim : (root.isNear ? root.positive : root.negative)
+                text: !root.pluginEnabled ? "󰦝" : root.deviceMissing ? "󰦉" : (root.isNear ? "󰄜" : "󰦞")
+                color: (!root.pluginEnabled || root.deviceMissing) ? root.dim : (root.isNear ? root.positive : root.negative)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.displayLarge
               }
@@ -307,7 +328,7 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.space(8)
-            visible: root.targetMac !== ""
+            visible: root.targetMac !== "" && !root.deviceMissing
 
             PanelSectionHeader {
               text: "SIGNAL STRENGTH"

@@ -100,12 +100,15 @@ function signalBarsIcon(bars) {
   }
 }
 
-function tooltipMessage(enabled, targetName, isNear, rssi, connected, awayCount, graceLimit) {
+function tooltipMessage(enabled, targetName, isNear, rssi, connected, awayCount, graceLimit, deviceMissing) {
   if (!enabled) {
     return "Proximity Lock: Paused (Click to configure)"
   }
   if (!targetName) {
     return "Proximity Lock: No phone paired (Click to select phone)"
+  }
+  if (deviceMissing) {
+    return targetName + ": not found in Bluetooth\n(unpaired, removed, or adapter off) — proximity paused"
   }
   if (isNear) {
     var rssiStr = (rssi !== null && rssi !== undefined) ? (" (" + rssi + " dBm)") : ""
