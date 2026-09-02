@@ -38,7 +38,7 @@ def list_paired_devices():
         name = parts[2] if len(parts) > 2 else mac
         
         _, info_out, _ = run_command(["bluetoothctl", "info", mac], timeout=2)
-        icon = "phone"
+        icon = "unknown"
         connected = False
         rssi = None
         

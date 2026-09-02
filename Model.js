@@ -7,6 +7,29 @@ function plainText(str) {
   return String(str).replace(/<[^>]*>/g, "")
 }
 
+// Map a BlueZ `Icon:` value (freedesktop icon name) to a Nerd Font MDI glyph
+// for the paired-devices list. Unknown/missing types fall back to a generic
+// Bluetooth glyph rather than guessing.
+function deviceGlyph(icon) {
+  switch (String(icon || "")) {
+    case "phone":              return "󰄜"  // cellphone
+    case "computer":           return "󰌢"  // laptop
+    case "audio-headphones":   return "󰋋"  // headphones
+    case "audio-headset":      return "󰋎"  // headset
+    case "audio-card":
+    case "multimedia-player":  return "󰓃"  // speaker
+    case "input-mouse":        return "󰍽"  // mouse
+    case "input-keyboard":     return "󰌌"  // keyboard
+    case "input-gaming":       return "󰻭"  // gamepad
+    case "input-tablet":       return "󰓶"  // tablet
+    case "camera-photo":
+    case "camera-video":       return "󰄀"  // camera
+    case "printer":            return "󰐪"  // printer
+    case "watch":              return "󰔠"  // watch
+    default:                   return "󰂯"  // bluetooth
+  }
+}
+
 function rssiToBars(rssi) {
   if (rssi === null || rssi === undefined) return 2
   if (rssi >= -60) return 4

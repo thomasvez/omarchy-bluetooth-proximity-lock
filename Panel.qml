@@ -495,8 +495,10 @@ Panel {
 
                   Text {
                     textFormat: Text.PlainText
-                    text: modelData.icon === "audio-headphones" ? "🎧" : (modelData.icon === "input-mouse" ? "🖱" : "📱")
+                    text: Model.deviceGlyph(modelData.icon)
+                    font.family: root.fontFamily
                     font.pixelSize: Style.font.body
+                    color: (root.targetMac === modelData.mac) ? root.foreground : root.dim
                   }
 
                   Text {
