@@ -13,48 +13,104 @@ Panel {
   ipcTarget: "io.github.hex0x90.proximity"
   manageIpc: false
 
-  property var anchorItem: null
-  property var hostWidget: null
-  property var widgetRoot: null
-  readonly property var barIdentity: hostWidget || root
+  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color urgent: bar ? bar.urgent : Color.urgent
+  readonly property color dim: Qt.darker(foreground, 1.55)
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-  readonly property color fg: bar ? bar.foreground : Color.foreground
-  readonly property string fontFam: bar ? bar.fontFamily : Style.font.family
-
-  // Settings
-  readonly property string targetMac: setting("targetMac", "")
-  readonly property string targetName: setting("targetName", "")
+  // Settings from shell.json
+  readonly property string targetMac: Model.plainText(setting("targetMac", ""))
+  readonly property string targetName: Model.plainText(setting("targetName", ""))
   readonly property int rssiThreshold: parseInt(setting("rssiThreshold", -78), 10) || -78
+  readonly property int pollIntervalSeconds: Math.max(2, parseInt(setting("pollIntervalSeconds", 4), 10) || 4)
+  readonly property int awayGraceCount: Math.max(1, parseInt(setting("awayGraceCount", 3), 10) || 3)
   readonly property bool immediateLock: setting("immediateLock", true) !== false
   readonly property bool notifyOnStateChange: setting("notifyOnStateChange", true) !== false
   readonly property bool pluginEnabled: setting("enabled", true) !== false
 
-  // Live state from widgetRoot
-  readonly property bool isNear: widgetRoot ? widgetRoot.isNear : false
-  readonly property bool isConnected: widgetRoot ? widgetRoot.isConnected : false
-  readonly property var currentRssi: widgetRoot ? widgetRoot.currentRssi : null
-  readonly property int missedChecks: widgetRoot ? widgetRoot.missedChecks : 0
+  // Live Proximity State
+  property bool isNear: false
+  property bool isConnected: false
+  property var currentRssi: null
+  property int missedChecks: 0
+  property bool isFirstCheck: true
 
   property var pairedDevices: []
   property bool loadingDevices: false
 
-  function open() {
-    root.controller.show()
-    root.refreshDevices()
+  function triggerProximityCheck() {
+    if (!root.pluginEnabled || !root.targetMac) return
+    if (probeProcess.running) return
+    
+    probeProcess.command = [
+      "python3",
+      Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
+      "--probe", root.targetMac,
+      "--threshold", String(root.rssiThreshold)
+    ]
+    probeProcess.running = true
   }
 
-  function openFromHotkey() {
-    root.controller.show()
-    root.refreshDevices()
-  }
+  function handleProbeResult(data) {
+    if (!root.pluginEnabled) return
 
-  function close() {
-    root.controller.hide()
-  }
+    var wasNear = root.isNear
+    var nowNear = false
+    var connected = (data.connected === true)
+    var rssi = (data.rssi !== undefined && data.rssi !== null) ? data.rssi : null
 
-  function toggle() {
-    if (root.opened) root.close()
-    else root.open()
+    root.isConnected = connected
+    root.currentRssi = rssi
+
+    if (data.status === "ok" && data.near === true) {
+      root.missedChecks = 0
+      nowNear = true
+    } else {
+      root.missedChecks++
+      if (root.missedChecks < root.awayGraceCount && wasNear) {
+        nowNear = true
+      } else {
+        nowNear = false
+      }
+    }
+
+    if (nowNear !== wasNear || root.isFirstCheck) {
+      root.isNear = nowNear
+      root.isFirstCheck = false
+
+      if (nowNear) {
+        actionProcess.command = [
+          "python3",
+          Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
+          "--stay-awake"
+        ]
+        actionProcess.running = true
+
+        if (root.notifyOnStateChange && root.bar) {
+          root.bar.run("omarchy-notification-send '📱 Phone in range' 'Computer stay-awake activated'")
+        }
+      } else {
+        if (root.immediateLock) {
+          actionProcess.command = [
+            "python3",
+            Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
+            "--lock"
+          ]
+          actionProcess.running = true
+        } else {
+          actionProcess.command = [
+            "python3",
+            Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
+            "--allow-idle"
+          ]
+          actionProcess.running = true
+        }
+
+        if (root.notifyOnStateChange && root.bar) {
+          root.bar.run("omarchy-notification-send '📱 Phone away' 'Omarchy locked'")
+        }
+      }
+    }
   }
 
   function refreshDevices() {
@@ -82,18 +138,50 @@ Panel {
     next.targetMac = mac
     next.targetName = name
     root.bar.shell.updateEntryInline(root.moduleName, next)
-    if (root.widgetRoot) root.widgetRoot.triggerProximityCheck()
+    Qt.callLater(root.triggerProximityCheck)
   }
 
   function lockNow() {
-    if (root.widgetRoot) root.widgetRoot.triggerProximityCheck()
-    lockProcess.command = [
+    actionProcess.command = [
       "python3",
       Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
       "--lock"
     ]
-    lockProcess.running = true
+    actionProcess.running = true
     root.close()
+  }
+
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
+  onOpenedChanged: if (opened) {
+    root.refreshDevices()
+    root.triggerProximityCheck()
+  }
+
+  // Periodic proximity poll
+  Timer {
+    interval: root.pollIntervalSeconds * 1000
+    running: root.pluginEnabled && root.targetMac !== ""
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.triggerProximityCheck()
+  }
+
+  Process {
+    id: probeProcess
+    stdout: SplitParser {
+      onRead: function(line) {
+        try {
+          var parsed = JSON.parse(line)
+          root.handleProbeResult(parsed)
+        } catch (e) {}
+      }
+    }
+  }
+
+  Process {
+    id: actionProcess
   }
 
   Process {
@@ -111,377 +199,355 @@ Panel {
     onExited: function() { root.loadingDevices = false }
   }
 
-  Process {
-    id: lockProcess
+  IpcHandler {
+    target: root.ipcTarget
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function check(): void { root.triggerProximityCheck() }
+    function lockNow(): void { root.lockNow() }
+    function status(): string {
+      return JSON.stringify({
+        enabled: root.pluginEnabled,
+        targetMac: root.targetMac,
+        targetName: root.targetName,
+        near: root.isNear,
+        connected: root.isConnected,
+        rssi: root.currentRssi,
+        missedChecks: root.missedChecks
+      })
+    }
   }
 
-  implicitWidth: 380
-  implicitHeight: contentColumn.implicitHeight + 36
-
-  Rectangle {
+  // ---- Bar Widget Button
+  WidgetButton {
+    id: button
     anchors.fill: parent
-    color: Color.background
-    radius: 12
-    border.color: Qt.rgba(1, 1, 1, 0.08)
-    border.width: 1
+    bar: root.bar
 
-    Column {
-      id: contentColumn
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.top: parent.top
-      anchors.margins: 18
-      spacing: 16
+    text: {
+      if (!root.pluginEnabled) return "📱 ⏸"
+      if (!root.targetMac) return "📱 ⚙"
+      if (root.isNear) return "📱 🔓"
+      return "📱 🔒"
+    }
 
-      // ---- Header
-      RowLayout {
-        width: parent.width
+    foreground: {
+      if (!root.pluginEnabled || !root.targetMac) return root.bar ? root.bar.barForeground : Color.foreground
+      if (root.isNear) return Qt.color("#2ecc71")
+      return Qt.color("#e74c3c")
+    }
 
-        Text {
-          text: "📱 Proximity Lock"
-          font.family: root.fontFam
-          font.pixelSize: 16
-          font.bold: true
-          color: root.fg
-          Layout.fillWidth: true
-        }
+    tooltipText: Model.tooltipMessage(
+      root.pluginEnabled,
+      root.targetName || root.targetMac,
+      root.isNear,
+      root.currentRssi,
+      root.isConnected,
+      root.missedChecks,
+      root.awayGraceCount
+    )
 
-        // Status Badge
-        Rectangle {
-          radius: 12
-          color: !root.pluginEnabled ? Qt.rgba(0.5, 0.5, 0.5, 0.2) : (root.isNear ? Qt.rgba(0.18, 0.8, 0.44, 0.2) : Qt.rgba(0.9, 0.3, 0.24, 0.2))
-          border.color: !root.pluginEnabled ? "#7f8c8d" : (root.isNear ? "#2ecc71" : "#e74c3c")
-          border.width: 1
-          implicitWidth: badgeText.implicitWidth + 16
-          implicitHeight: 24
+    onPressed: function(b) {
+      if (!root.bar) return
+      if (b === Qt.RightButton) root.lockNow()
+      else if (b === Qt.MiddleButton) root.triggerProximityCheck()
+      else root.toggle()
+    }
+  }
 
-          Text {
-            id: badgeText
-            anchors.centerIn: parent
-            text: !root.pluginEnabled ? "PAUSED" : (root.isNear ? "NEAR & AWAKE" : "AWAY")
-            font.pixelSize: 10
-            font.bold: true
-            color: !root.pluginEnabled ? "#bdc3c7" : (root.isNear ? "#2ecc71" : "#e74c3c")
-          }
-        }
-      }
+  // ---- Dropdown Panel Surface
+  KeyboardPanel {
+    id: panel
+    anchorItem: button
+    owner: root
+    bar: root.bar
+    open: root.opened
+    focusTarget: keyCatcher
+    contentWidth: panel.fittedContentWidth(Style.space(360))
+    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(520))
 
-      Rectangle {
-        width: parent.width
-        height: 1
-        color: Qt.rgba(1, 1, 1, 0.06)
-      }
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      onCloseRequested: root.close()
+      onTabRequested: function (direction) { root.switchPanel(direction) }
 
-      // ---- Section 1: Paired Device Picker
-      Column {
-        width: parent.width
-        spacing: 8
+      Flickable {
+        id: flick
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: panelColumn.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
 
-        RowLayout {
-          width: parent.width
-          Text {
-            text: "TARGET PHONE"
-            font.pixelSize: 11
-            font.bold: true
-            color: Qt.darker(root.fg, 1.4)
-            Layout.fillWidth: true
-          }
-          Text {
-            text: root.loadingDevices ? "Scanning..." : "Refresh ↻"
-            font.pixelSize: 11
-            color: Color.accent
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.refreshDevices()
-            }
-          }
-        }
+        Column {
+          id: panelColumn
+          width: flick.width
+          spacing: Style.space(12)
 
-        // Selected device box
-        Rectangle {
-          width: parent.width
-          height: 48
-          radius: 8
-          color: Qt.rgba(1, 1, 1, 0.04)
-          border.color: root.targetMac ? Color.accent : Qt.rgba(1, 1, 1, 0.1)
-
-          RowLayout {
-            anchors.fill: parent
-            anchors.margins: 10
-            spacing: 10
-
-            Text {
-              text: "📱"
-              font.pixelSize: 18
-            }
-
-            Column {
-              Layout.fillWidth: true
-              Text {
-                text: root.targetName ? root.targetName : (root.targetMac ? root.targetMac : "No phone selected")
-                font.bold: true
-                font.pixelSize: 13
-                color: root.fg
-                elide: Text.ElideRight
-              }
-              Text {
-                text: root.targetMac ? root.targetMac : "Select your phone from the list below"
-                font.pixelSize: 10
-                color: Qt.darker(root.fg, 1.5)
-              }
-            }
-          }
-        }
-
-        // Paired device list
-        Text {
-          text: "PAIRED BLUETOOTH DEVICES:"
-          font.pixelSize: 10
-          color: Qt.darker(root.fg, 1.6)
-          visible: root.pairedDevices.length > 0
-        }
-
-        Repeater {
-          model: root.pairedDevices
-          delegate: Rectangle {
+          PanelHero {
             width: parent.width
-            height: 38
-            radius: 6
-            color: (root.targetMac === modelData.mac) ? Qt.rgba(0.2, 0.6, 1.0, 0.15) : (mouseArea.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(1, 1, 1, 0.02))
-            border.color: (root.targetMac === modelData.mac) ? Color.accent : "transparent"
+            title: root.targetName !== "" ? root.targetName : (root.targetMac !== "" ? root.targetMac : "Proximity Lock")
+            meta: !root.pluginEnabled ? "Proximity detection paused"
+              : !root.targetMac ? "No phone selected — tap a paired device below"
+              : root.isNear ? ("Nearby (" + (root.currentRssi !== null ? root.currentRssi + " dBm" : "Active") + ") • Stay-Awake")
+              : "Out of range • Screen locked"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            iconOpacity: root.isNear ? 1.0 : 0.6
+          }
 
-            MouseArea {
-              id: mouseArea
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.selectDevice(modelData.mac, modelData.name)
+          // Section 1: Signal Meter
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.targetMac !== ""
+
+            PanelSectionHeader {
+              text: "PROXIMITY SIGNAL"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Rectangle {
+              width: parent.width
+              height: Style.space(8)
+              radius: Style.space(4)
+              color: Qt.rgba(1, 1, 1, 0.1)
+
+              Rectangle {
+                height: parent.height
+                radius: parent.radius
+                width: parent.width * (Model.rssiToPercent(root.currentRssi) / 100.0)
+                color: root.isNear ? "#2ecc71" : "#e74c3c"
+              }
             }
 
             RowLayout {
-              anchors.fill: parent
-              anchors.margins: 8
+              width: parent.width
+              spacing: Style.space(6)
 
-              Text {
-                text: modelData.icon === "audio-headphones" ? "🎧" : (modelData.icon === "input-mouse" ? "🖱" : "📱")
-                font.pixelSize: 14
-              }
+              Repeater {
+                model: [
+                  { label: "Close (-68 dBm)", val: -68 },
+                  { label: "Medium (-78 dBm)", val: -78 },
+                  { label: "Far (-88 dBm)", val: -88 }
+                ]
+                delegate: Rectangle {
+                  Layout.fillWidth: true
+                  height: Style.space(26)
+                  radius: Style.space(4)
+                  color: (root.rssiThreshold === modelData.val) ? Color.accent : (chipMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.05))
 
-              Text {
-                text: modelData.name
-                font.pixelSize: 12
-                color: root.fg
-                Layout.fillWidth: true
-                elide: Text.ElideRight
-              }
+                  MouseArea {
+                    id: chipMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.updateSetting("rssiThreshold", modelData.val)
+                  }
 
-              Text {
-                text: modelData.connected ? "Connected" : "Paired"
-                font.pixelSize: 10
-                color: modelData.connected ? "#2ecc71" : Qt.darker(root.fg, 1.6)
+                  Text {
+                    anchors.centerIn: parent
+                    text: modelData.label
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: root.rssiThreshold === modelData.val
+                    color: root.foreground
+                  }
+                }
               }
             }
           }
-        }
-      }
 
-      Rectangle {
-        width: parent.width
-        height: 1
-        color: Qt.rgba(1, 1, 1, 0.06)
-      }
+          // Section 2: Paired Devices
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
 
-      // ---- Section 2: Proximity Signal & Sensitivity
-      Column {
-        width: parent.width
-        spacing: 8
+            RowLayout {
+              width: parent.width
+              PanelSectionHeader {
+                text: "PAIRED BLUETOOTH DEVICES"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                Layout.fillWidth: true
+              }
 
-        RowLayout {
-          width: parent.width
-          Text {
-            text: "PROXIMITY SIGNAL"
-            font.pixelSize: 11
-            font.bold: true
-            color: Qt.darker(root.fg, 1.4)
-            Layout.fillWidth: true
+              Text {
+                text: root.loadingDevices ? "Scanning..." : "Refresh ↻"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                color: Color.accent
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.refreshDevices()
+                }
+              }
+            }
+
+            Repeater {
+              model: root.pairedDevices
+              delegate: Rectangle {
+                width: parent.width
+                height: Style.space(34)
+                radius: Style.space(5)
+                color: (root.targetMac === modelData.mac) ? Qt.rgba(0.2, 0.6, 1.0, 0.2) : (devMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(1, 1, 1, 0.03))
+                border.color: (root.targetMac === modelData.mac) ? Color.accent : "transparent"
+                border.width: 1
+
+                MouseArea {
+                  id: devMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.selectDevice(modelData.mac, modelData.name)
+                }
+
+                RowLayout {
+                  anchors.fill: parent
+                  anchors.leftMargin: Style.space(8)
+                  anchors.rightMargin: Style.space(8)
+                  spacing: Style.space(8)
+
+                  Text {
+                    text: modelData.icon === "audio-headphones" ? "🎧" : (modelData.icon === "input-mouse" ? "🖱" : "📱")
+                    font.pixelSize: Style.font.body
+                  }
+
+                  Text {
+                    text: modelData.name
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    color: root.foreground
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                  }
+
+                  Text {
+                    text: (root.targetMac === modelData.mac) ? "✓ Active" : (modelData.connected ? "Connected" : "Paired")
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    color: (root.targetMac === modelData.mac) ? Color.accent : (modelData.connected ? "#2ecc71" : root.dim)
+                  }
+                }
+              }
+            }
           }
-          Text {
-            text: (root.currentRssi !== null) ? (root.currentRssi + " dBm") : (root.isConnected ? "Active" : "Out of range")
-            font.pixelSize: 11
-            font.bold: true
-            color: root.isNear ? "#2ecc71" : "#e74c3c"
-          }
-        }
 
-        // Live Signal Bar
-        Rectangle {
-          width: parent.width
-          height: 10
-          radius: 5
-          color: Qt.rgba(1, 1, 1, 0.1)
+          // Section 3: Lock Controls
+          Column {
+            width: parent.width
+            spacing: Style.space(8)
 
-          Rectangle {
-            height: parent.height
-            radius: 5
-            width: parent.width * (Model.rssiToPercent(root.currentRssi) / 100.0)
-            color: root.isNear ? "#2ecc71" : "#e74c3c"
-          }
-        }
+            PanelSectionHeader {
+              text: "OPTIONS"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
 
-        // Sensitivity Preset Chips
-        RowLayout {
-          width: parent.width
-          spacing: 8
-
-          Repeater {
-            model: [
-              { label: "Close (-68 dBm)", val: -68 },
-              { label: "Medium (-78 dBm)", val: -78 },
-              { label: "Far (-88 dBm)", val: -88 }
-            ]
-            delegate: Rectangle {
-              Layout.fillWidth: true
-              height: 28
-              radius: 6
-              color: (root.rssiThreshold === modelData.val) ? Color.accent : (chipMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(1, 1, 1, 0.03))
+            // Immediate Lock Toggle
+            Rectangle {
+              width: parent.width
+              height: Style.space(32)
+              radius: Style.space(4)
+              color: Qt.rgba(1, 1, 1, 0.03)
 
               MouseArea {
-                id: chipMouse
                 anchors.fill: parent
-                hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.updateSetting("rssiThreshold", modelData.val)
+                onClicked: root.updateSetting("immediateLock", !root.immediateLock)
               }
 
-              Text {
-                anchors.centerIn: parent
-                text: modelData.label
-                font.pixelSize: 10
-                font.bold: root.rssiThreshold === modelData.val
-                color: root.fg
+              RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(8)
+
+                Text {
+                  text: "Immediate lock when away"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  color: root.foreground
+                  Layout.fillWidth: true
+                }
+
+                Text {
+                  text: root.immediateLock ? "Enabled" : "Disabled"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  color: root.immediateLock ? Color.accent : root.dim
+                }
+              }
+            }
+
+            // Pause Toggle
+            Rectangle {
+              width: parent.width
+              height: Style.space(32)
+              radius: Style.space(4)
+              color: Qt.rgba(1, 1, 1, 0.03)
+
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.updateSetting("enabled", !root.pluginEnabled)
+              }
+
+              RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(8)
+
+                Text {
+                  text: "Proximity detection active"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  color: root.foreground
+                  Layout.fillWidth: true
+                }
+
+                Text {
+                  text: root.pluginEnabled ? "Active" : "Paused"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  color: root.pluginEnabled ? "#2ecc71" : "#e74c3c"
+                }
               }
             }
           }
-        }
-      }
 
-      Rectangle {
-        width: parent.width
-        height: 1
-        color: Qt.rgba(1, 1, 1, 0.06)
-      }
-
-      // ---- Section 3: Lock Mode Options
-      Column {
-        width: parent.width
-        spacing: 10
-
-        // Immediate Lock Toggle
-        RowLayout {
-          width: parent.width
-          Column {
-            Layout.fillWidth: true
-            Text {
-              text: "Immediate Lock When Away"
-              font.pixelSize: 12
-              color: root.fg
-            }
-            Text {
-              text: "Instantly lock screen as soon as phone leaves range"
-              font.pixelSize: 10
-              color: Qt.darker(root.fg, 1.5)
-            }
-          }
-
+          // Section 4: Lock Now Action
           Rectangle {
-            width: 36
-            height: 20
-            radius: 10
-            color: root.immediateLock ? Color.accent : Qt.rgba(1, 1, 1, 0.15)
+            width: parent.width
+            height: Style.space(32)
+            radius: Style.space(5)
+            color: lockMouse.containsMouse ? Qt.rgba(0.9, 0.3, 0.2, 0.25) : Qt.rgba(0.9, 0.3, 0.2, 0.12)
+            border.color: "#e74c3c"
+            border.width: 1
+
             MouseArea {
+              id: lockMouse
               anchors.fill: parent
+              hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: root.updateSetting("immediateLock", !root.immediateLock)
+              onClicked: root.lockNow()
             }
-            Rectangle {
-              x: root.immediateLock ? 18 : 2
-              y: 2
-              width: 16
-              height: 16
-              radius: 8
-              color: "#ffffff"
-            }
-          }
-        }
 
-        // Enable / Pause Plugin
-        RowLayout {
-          width: parent.width
-          Column {
-            Layout.fillWidth: true
             Text {
-              text: "Proximity Detection Active"
-              font.pixelSize: 12
-              color: root.fg
+              anchors.centerIn: parent
+              text: "🔒 Lock Computer Now"
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+              color: "#e74c3c"
             }
-            Text {
-              text: "Pause or resume automatic stay-awake & lock"
-              font.pixelSize: 10
-              color: Qt.darker(root.fg, 1.5)
-            }
-          }
-
-          Rectangle {
-            width: 36
-            height: 20
-            radius: 10
-            color: root.pluginEnabled ? "#2ecc71" : Qt.rgba(1, 1, 1, 0.15)
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.updateSetting("enabled", !root.pluginEnabled)
-            }
-            Rectangle {
-              x: root.pluginEnabled ? 18 : 2
-              y: 2
-              width: 16
-              height: 16
-              radius: 8
-              color: "#ffffff"
-            }
-          }
-        }
-      }
-
-      // ---- Section 4: Quick Lock Action
-      Rectangle {
-        width: parent.width
-        height: 34
-        radius: 6
-        color: lockBtnMouse.containsMouse ? Qt.rgba(0.9, 0.3, 0.2, 0.25) : Qt.rgba(0.9, 0.3, 0.2, 0.12)
-        border.color: "#e74c3c"
-
-        MouseArea {
-          id: lockBtnMouse
-          anchors.fill: parent
-          hoverEnabled: true
-          cursorShape: Qt.PointingHandCursor
-          onClicked: root.lockNow()
-        }
-
-        RowLayout {
-          anchors.centerIn: parent
-          spacing: 6
-          Text {
-            text: "🔒"
-            font.pixelSize: 12
-          }
-          Text {
-            text: "Lock Computer Now"
-            font.pixelSize: 12
-            font.bold: true
-            color: "#e74c3c"
           }
         }
       }
