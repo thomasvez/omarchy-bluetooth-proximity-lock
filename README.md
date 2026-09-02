@@ -91,6 +91,17 @@ Set from the panel, or in the widget's `shell.json` entry:
 | `immediateLock` | `true` | Lock immediately on departure vs. just re-arming the idle timer. |
 | `notifyOnStateChange` | `true` | Desktop notification on in-range / away transitions. |
 
+## Development
+
+```bash
+pytest                       # probe logic + Bluetooth output parsing
+node --test tests/*.test.js   # Model.js helpers (glyphs, filter, poll lease)
+ruff check scripts/ tests/
+```
+
+CI runs all of the above plus shellcheck, manifest validation, and a check
+that every `Qt.resolvedUrl()` in the QML resolves to a bundled file.
+
 ## License
 
 MIT

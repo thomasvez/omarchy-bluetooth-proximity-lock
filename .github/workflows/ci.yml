@@ -18,9 +18,15 @@ jobs:
 
       - name: Lint the probe script
         run: |
-          python -m pip install --quiet ruff
-          ruff check scripts/
+          python -m pip install --quiet ruff pytest
+          ruff check scripts/ tests/
           python -m py_compile scripts/proximity-probe.py
+
+      - name: Python tests
+        run: pytest
+
+      - name: JavaScript tests (Model.js)
+        run: node --test tests/*.test.js
 
       - name: Shellcheck the setup script
         run: shellcheck setup
@@ -28,7 +34,7 @@ jobs:
       - name: Validate the plugin manifest
         run: |
           python - <<'PY'
-          import json, sys, pathlib
+          import json, sys, pathlib, re
 
           m = json.loads(pathlib.Path("manifest.json").read_text())
 
@@ -42,8 +48,6 @@ jobs:
           for name, rel in m["entryPoints"].items():
               assert pathlib.Path(rel).is_file(), f"entryPoints.{name} -> missing file {rel!r}"
 
-          # SemVer-ish
-          import re
           assert re.fullmatch(r"\d+\.\d+\.\d+", m["version"]), f"bad version {m['version']!r}"
 
           # README references it
