@@ -17,6 +17,16 @@ Panel {
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
+  // Proximity state colours (semantic, not themed) and theme-neutral surface
+  // tints derived from the foreground so selection reads well in any theme —
+  // the theme accent skews light-blue on dark backgrounds.
+  readonly property color positive: "#2ecc71"
+  readonly property color negative: "#e74c3c"
+  readonly property color trackFill: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.06)
+  readonly property color hoverFill: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.12)
+  readonly property color selectedFill: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.20)
+  readonly property color hairline: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.35)
+
   // Settings
   readonly property string targetMac: Model.plainText(setting("targetMac", ""))
   readonly property string targetName: Model.plainText(setting("targetName", ""))
@@ -267,7 +277,9 @@ Panel {
             iconComponent: Component {
               Text {
                 textFormat: Text.PlainText
-                text: "📱"
+                text: !root.pluginEnabled ? "󰦝" : (root.isNear ? "󰄜" : "󰦞")
+                color: !root.pluginEnabled ? root.dim : (root.isNear ? root.positive : root.negative)
+                font.family: root.fontFamily
                 font.pixelSize: Style.font.displayLarge
               }
             }
@@ -293,7 +305,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
-                  text: root.isNear ? "Connected / In Range" : "Out of Range"
+                  text: root.isNear ? "In range" : "Out of range"
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -314,52 +326,110 @@ Panel {
               width: parent.width
               height: Style.space(8)
               radius: Style.space(4)
-              color: Qt.rgba(1, 1, 1, 0.1)
+              color: root.trackFill
 
               Rectangle {
                 height: parent.height
                 radius: parent.radius
-                width: Math.max(0, Math.min(parent.width, parent.width * (Model.rssiToPercent(root.currentRssi) / 100.0)))
-                color: root.isNear ? "#2ecc71" : "#e74c3c"
+                width: root.currentRssi === null ? 0
+                     : Math.max(0, Math.min(parent.width, parent.width * (Model.rssiToPercent(root.currentRssi) / 100.0)))
+                color: root.isNear ? root.positive : root.negative
+                Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+              }
+            }
+          }
+
+          // 2b. Detection range — segmented control writing rssiThreshold
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.targetMac !== ""
+
+            Item {
+              width: parent.width
+              height: rangeHdr.implicitHeight
+
+              PanelSectionHeader {
+                id: rangeHdr
+                text: "DETECTION RANGE"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.rssiThreshold + " dBm"
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
               }
             }
 
-            // Sensitivity Chips
-            Row {
+            Rectangle {
               width: parent.width
-              spacing: Style.space(6)
+              height: Style.space(30)
+              radius: Style.space(6)
+              color: root.trackFill
+              border.color: root.hairline
+              border.width: 1
+              clip: true
 
-              Repeater {
-                model: [
-                  { label: "Close (-68 dBm)", val: -68 },
-                  { label: "Medium (-78 dBm)", val: -78 },
-                  { label: "Far (-88 dBm)", val: -88 }
-                ]
-                delegate: Rectangle {
-                  width: Math.max(80, (column.width - Style.space(12)) / 3)
-                  height: Style.space(26)
-                  radius: Style.space(4)
-                  color: (root.rssiThreshold === modelData.val) ? Color.accent : (chipMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.05))
+              Row {
+                anchors.fill: parent
+                anchors.margins: Style.space(2)
 
-                  MouseArea {
-                    id: chipMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.updateSetting("rssiThreshold", modelData.val)
-                  }
+                Repeater {
+                  model: [
+                    { label: "Close", val: -68 },
+                    { label: "Medium", val: -78 },
+                    { label: "Far", val: -88 }
+                  ]
+                  delegate: Rectangle {
+                    readonly property bool selected: root.rssiThreshold === modelData.val
+                    width: (parent.width - 1) / 3
+                    height: parent.height
+                    radius: Style.space(4)
+                    color: selected ? root.selectedFill
+                         : segMouse.containsMouse ? root.hoverFill : "transparent"
+                    border.width: 1
+                    border.color: selected ? root.hairline : "transparent"
 
-                  Text {
-                    textFormat: Text.PlainText
-                    anchors.centerIn: parent
-                    text: modelData.label
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: root.rssiThreshold === modelData.val
-                    color: root.foreground
+                    MouseArea {
+                      id: segMouse
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.updateSetting("rssiThreshold", modelData.val)
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      anchors.centerIn: parent
+                      text: modelData.label
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: parent.selected
+                      color: parent.selected ? root.foreground : root.dim
+                    }
                   }
                 }
               }
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              wrapMode: Text.WordWrap
+              text: root.rssiThreshold >= -70
+                    ? "Locks as soon as you lean away from the desk."
+                    : (root.rssiThreshold >= -82
+                       ? "Stays awake while you are at the desk."
+                       : "Stays awake anywhere in the room.")
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
             }
           }
 
@@ -386,9 +456,11 @@ Panel {
                 text: root.loadingDevices ? "Scanning..." : "Refresh ↻"
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
-                color: Color.accent
+                color: refreshMouse.containsMouse ? root.foreground : root.dim
                 MouseArea {
+                  id: refreshMouse
                   anchors.fill: parent
+                  hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
                   onClicked: root.refreshDevices()
                 }
@@ -401,8 +473,8 @@ Panel {
                 width: column.width
                 height: Style.space(34)
                 radius: Style.space(5)
-                color: (root.targetMac === modelData.mac) ? Qt.rgba(0.2, 0.6, 1.0, 0.2) : (devMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(1, 1, 1, 0.03))
-                border.color: (root.targetMac === modelData.mac) ? Color.accent : "transparent"
+                color: (root.targetMac === modelData.mac) ? root.selectedFill : (devMouse.containsMouse ? root.hoverFill : root.trackFill)
+                border.color: (root.targetMac === modelData.mac) ? root.hairline : "transparent"
                 border.width: 1
 
                 MouseArea {
@@ -446,7 +518,8 @@ Panel {
                   text: (root.targetMac === modelData.mac) ? "✓ Selected" : (modelData.connected ? "Connected" : "Paired")
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
-                  color: (root.targetMac === modelData.mac) ? Color.accent : (modelData.connected ? "#2ecc71" : root.dim)
+                  font.bold: root.targetMac === modelData.mac
+                  color: (root.targetMac === modelData.mac) ? root.positive : (modelData.connected ? root.positive : root.dim)
                 }
               }
             }
@@ -467,10 +540,12 @@ Panel {
               width: parent.width
               height: Style.space(32)
               radius: Style.space(4)
-              color: Qt.rgba(1, 1, 1, 0.03)
+              color: immLockMouse.containsMouse ? root.hoverFill : root.trackFill
 
               MouseArea {
+                id: immLockMouse
                 anchors.fill: parent
+                hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: root.updateSetting("immediateLock", !root.immediateLock)
               }
@@ -495,7 +570,7 @@ Panel {
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true
-                color: root.immediateLock ? Color.accent : root.dim
+                color: root.immediateLock ? root.positive : root.dim
               }
             }
 
@@ -503,10 +578,12 @@ Panel {
               width: parent.width
               height: Style.space(32)
               radius: Style.space(4)
-              color: Qt.rgba(1, 1, 1, 0.03)
+              color: enabledMouse.containsMouse ? root.hoverFill : root.trackFill
 
               MouseArea {
+                id: enabledMouse
                 anchors.fill: parent
+                hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: root.updateSetting("enabled", !root.pluginEnabled)
               }
@@ -531,7 +608,7 @@ Panel {
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true
-                color: root.pluginEnabled ? "#2ecc71" : "#e74c3c"
+                color: root.pluginEnabled ? root.positive : root.negative
               }
             }
           }
@@ -541,8 +618,8 @@ Panel {
             width: parent.width
             height: Style.space(34)
             radius: Style.space(5)
-            color: lockMouse.containsMouse ? Qt.rgba(0.9, 0.3, 0.2, 0.25) : Qt.rgba(0.9, 0.3, 0.2, 0.12)
-            border.color: "#e74c3c"
+            color: lockMouse.containsMouse ? Qt.alpha(root.negative, 0.25) : Qt.alpha(root.negative, 0.12)
+            border.color: root.negative
             border.width: 1
 
             MouseArea {
@@ -556,11 +633,11 @@ Panel {
             Text {
               textFormat: Text.PlainText
               anchors.centerIn: parent
-              text: "🔒 Lock Computer Now"
+              text: "󰌾  Lock Computer Now"
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               font.bold: true
-              color: "#e74c3c"
+              color: root.negative
             }
           }
         }

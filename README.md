@@ -10,13 +10,13 @@ A native **Omarchy 4 (Quattro)** plugin that keeps your computer unlocked and aw
 - **Immediate Lock on Departure**: Automatically triggers `omarchy-system-lock` when your phone signal drops or you walk away.
 - **Duty-Cycled Bluetooth Polling**: A phone rarely holds an active Bluetooth connection to a laptop, so each poll runs a short (~4 s) BLE discovery window to refresh the phone's RSSI, then leaves the radio idle for the rest of the interval so bonded devices (mice, keyboards, headphones) can still reconnect. Raise **Poll Interval** to widen that idle gap.
 - **Interactive Top-Bar Widget**:
-  - Live glanceable icon (`📱 🔓` when nearby & awake, `📱 🔒` when locked/away, `📱 ⏸` when paused).
+  - Single glanceable phone icon, green when nearby & awake, red when locked/away, dimmed when paused.
   - Hover tooltip with live RSSI signal strength (dBm) and connection status.
   - Middle-click to force a proximity check.
   - Right-click to lock immediately.
 - **Visual Settings Panel**:
   - 1-click device picker listing all bonded/paired Bluetooth devices.
-  - Live signal meter & sensitivity presets (Close: -68 dBm, Medium: -78 dBm, Far: -88 dBm).
+  - Live signal meter and a Close / Medium / Far detection-range selector (−68 / −78 / −88 dBm).
   - Toggle for Immediate Lock vs Resume Idle countdown.
   - Quick Pause/Resume switch.
 

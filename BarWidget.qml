@@ -96,11 +96,13 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
 
+    // Single Nerd Font glyph (MDI cellphone family) so the widget reads as
+    // one bar icon; state is carried by colour plus the lock/off variants.
     text: {
-      if (!root.pluginEnabled) return "📱 ⏸"
-      if (!root.targetMac) return "📱 ⚙"
-      if (root.isNear) return "📱 🔓"
-      return "📱 🔒"
+      if (!root.pluginEnabled) return "󰦝"   // cellphone-off — paused
+      if (!root.targetMac) return "󰄜"       // cellphone — needs a device
+      if (root.isNear) return "󰄜"           // cellphone — in range
+      return "󰦞"                            // cellphone-lock — away / locked
     }
 
     foreground: {
