@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Lint the probe script
+        run: |
+          python -m pip install --quiet ruff
+          ruff check scripts/
+          python -m py_compile scripts/proximity-probe.py
+
+      - name: Shellcheck the setup script
+        run: shellcheck setup
+
+      - name: Validate the plugin manifest
+        run: |
+          python - <<'PY'
+          import json, sys, pathlib
+
+          m = json.loads(pathlib.Path("manifest.json").read_text())
+
+          required = ["schemaVersion", "id", "name", "version", "kinds", "entryPoints"]
+          missing = [k for k in required if k not in m]
+          assert not missing, f"manifest.json missing keys: {missing}"
+
+          assert m["kinds"], "manifest.json: kinds is empty"
+
+          # Every declared entry point must point at a file that exists.
+          for name, rel in m["entryPoints"].items():
+              assert pathlib.Path(rel).is_file(), f"entryPoints.{name} -> missing file {rel!r}"
+
+          # SemVer-ish
+          import re
+          assert re.fullmatch(r"\d+\.\d+\.\d+", m["version"]), f"bad version {m['version']!r}"
+
+          # README references it
+          assert pathlib.Path("preview.png").is_file(), "preview.png is missing"
+
+          print(f"ok: {m['id']} v{m['version']} ({', '.join(m['kinds'])})")
+          PY
+
+      - name: Check QML files reference only bundled scripts
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+
+          bad = []
+          for qml in pathlib.Path(".").rglob("*.qml"):
+              for i, line in enumerate(qml.read_text().splitlines(), 1):
+                  for ref in re.findall(r'Qt\.resolvedUrl\("([^"]+)"\)', line):
+                      if not (qml.parent / ref).exists():
+                          bad.append(f"{qml}:{i}  -> {ref}")
+
+          if bad:
+              print("QML resolvedUrl points at missing files:")
+              print("\n".join(bad))
+              sys.exit(1)
+          print("ok: all Qt.resolvedUrl targets exist")
+          PY

@@ -4,21 +4,22 @@ Omarchy Proximity Lock & Stay-Awake Backend
 Provides fast, unprivileged Bluetooth queries and Omarchy idle control.
 """
 
-import sys
-import os
-import time
-import json
-import subprocess
 import argparse
+import contextlib
+import json
+import os
 import re
+import subprocess
+import time
+
 
 def run_command(cmd, timeout=3):
     try:
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
         return res.returncode, res.stdout, res.stderr
     except subprocess.TimeoutExpired:
         return -1, "", "Timeout"
-    except Exception as e:
+    except OSError as e:
         return -1, "", str(e)
 
 def list_paired_devices():
@@ -26,7 +27,7 @@ def list_paired_devices():
     code, out, _ = run_command(["bluetoothctl", "devices", "Paired"])
     if code != 0:
         return []
-    
+
     devices = []
     for line in out.splitlines():
         line = line.strip()
@@ -37,12 +38,12 @@ def list_paired_devices():
             continue
         mac = parts[1]
         name = parts[2] if len(parts) > 2 else mac
-        
+
         _, info_out, _ = run_command(["bluetoothctl", "info", mac], timeout=2)
         icon = "unknown"
         connected = False
         rssi = None
-        
+
         for info_line in info_out.splitlines():
             info_line = info_line.strip()
             if info_line.startswith("Icon:"):
@@ -50,13 +51,11 @@ def list_paired_devices():
             elif info_line.startswith("Connected:"):
                 connected = (info_line.split(":", 1)[1].strip().lower() == "yes")
             elif info_line.startswith("RSSI:"):
-                try:
+                with contextlib.suppress(ValueError):
                     rssi = int(info_line.split(":", 1)[1].strip())
-                except ValueError:
-                    pass
             elif info_line.startswith("Alias:"):
                 name = info_line.split(":", 1)[1].strip()
-                
+
         devices.append({
             "mac": mac,
             "name": name,
@@ -76,21 +75,21 @@ def get_device_info_dbus(mac):
         "--method", "org.freedesktop.DBus.Properties.GetAll",
         "org.bluez.Device1"
     ], timeout=2)
-    
+
     if code != 0:
         return None
-    
+
     connected = ("'Connected': <true>" in out)
     rssi = None
     rssi_match = re.search(r"'RSSI': <(?:int16|int32|uint16|uint32|byte|int) (-?\d+)>", out)
     if rssi_match:
         rssi = int(rssi_match.group(1))
-            
+
     name = mac
     name_match = re.search(r"'(?:Alias|Name)': <'([^']+)'>", out)
     if name_match:
         name = name_match.group(1)
-        
+
     return {
         "mac": mac,
         "name": name,
@@ -206,7 +205,7 @@ def set_omarchy_stay_awake(enabled=True):
     home = os.path.expanduser("~")
     state_dir = os.path.join(home, ".local", "state", "omarchy", "indicators")
     state_file = os.path.join(state_dir, "stay-awake")
-    
+
     if enabled:
         os.makedirs(state_dir, exist_ok=True)
         with open(state_file, "a"):
@@ -214,10 +213,8 @@ def set_omarchy_stay_awake(enabled=True):
         run_command(["omarchy-toggle-idle", "stay-awake"], timeout=2)
     else:
         if os.path.exists(state_file):
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(state_file)
-            except OSError:
-                pass
         run_command(["omarchy-toggle-idle", "allow-idle"], timeout=2)
 
 def lock_omarchy():
@@ -230,15 +227,15 @@ def main():
     parser.add_argument("--probe", type=str, help="Probe MAC address for proximity")
     parser.add_argument("--threshold", type=int, default=-78, help="RSSI threshold in dBm")
     parser.add_argument("--scan-window", type=int, default=0,
-                        help="Seconds of BLE discovery to refresh RSSI when the device is not connected (0 = off)")
+                        help="Seconds of BLE discovery to measure RSSI when disconnected (0 = off)")
     parser.add_argument("--state-file", type=str, default="",
-                        help="Also write the --probe result here (atomically) so every widget copy can read it")
+                        help="Also write the --probe result here, atomically, for other readers")
     parser.add_argument("--stay-awake", action="store_true", help="Set Omarchy to stay awake")
     parser.add_argument("--allow-idle", action="store_true", help="Allow Omarchy to idle")
     parser.add_argument("--lock", action="store_true", help="Trigger Omarchy lock screen")
-    
+
     args = parser.parse_args()
-    
+
     if args.list_devices:
         devices = list_paired_devices()
         print(json.dumps(devices))
