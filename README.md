@@ -1,4 +1,4 @@
-# Bluetooth Proximity Lock for Omarchy (`omarchy-proximity`)
+# Bluetooth Proximity Lock for Omarchy (`omarchy-bluetooth-proximity-lock`)
 
 Auto-lock your screen when you walk away with your phone, and keep it awake
 while you're nearby. A native **Omarchy 4 (Quattro)** bar widget that uses
