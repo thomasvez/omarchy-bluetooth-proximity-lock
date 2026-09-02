@@ -219,7 +219,10 @@ Panel {
   }
 
   function lockNow() {
-    root.runHelper("--lock")
+    // Manual lock: just lock. Unlike the automatic away-transition it leaves
+    // the stay-awake state untouched, so coming straight back and unlocking
+    // doesn't leave the idle timer disarmed.
+    Util.execArgv(["omarchy-system-lock"])
     root.close()
   }
 

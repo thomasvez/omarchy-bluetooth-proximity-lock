@@ -122,6 +122,31 @@ def get_device_info_ctl(mac):
 MAC_RE = re.compile(r"[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\Z")
 
 
+def scan_for_rssi(mac, window):
+    """Run an active discovery window and return the device's RSSI *only if it
+    was actually heard during the scan*.
+
+    BlueZ keeps a bonded device's last RSSI property indefinitely after it goes
+    silent (an iPhone with Find My does this on BT-off, airplane mode, even
+    powered off), so the cached property can't tell "here" from "gone". The
+    per-device lines bluetoothctl streams while scanning only appear for a
+    device that is genuinely advertising right now, so that's what we trust.
+    Returns (rssi_or_None, heard_bool).
+    """
+    _, out, _ = run_command(["bluetoothctl", "--timeout", str(window), "scan", "on"],
+                            timeout=window + 5)
+    rssi = None
+    heard = False
+    for line in out.splitlines():
+        if mac not in line or "RSSI" not in line:
+            continue
+        m = re.search(r"RSSI(?:[:=]|\s+is)?\s*(?:0x[0-9a-fA-F]+\s*)?\(?(-?\d+)\)?", line)
+        if m:
+            rssi = int(m.group(1))
+            heard = True
+    return rssi, heard
+
+
 def probe_device(mac, threshold=-78, scan_window=0):
     if not mac or mac.strip() == "":
         return {"status": "no_device", "mac": "", "near": False, "connected": False, "rssi": None}
@@ -137,33 +162,35 @@ def probe_device(mac, threshold=-78, scan_window=0):
     if not info:
         return {"status": "not_found", "mac": mac, "near": False, "connected": False, "rssi": None}
 
-    # BlueZ drops a non-connected device's RSSI within a few seconds of the
-    # last discovery ending, so a phone sitting right next to the laptop reads
-    # as rssi=None unless something is actively scanning. Run a short discovery
-    # window, then re-read. Skip it when already connected (RSSI isn't needed)
-    # and keep the window brief + let the caller poll slowly, so the LE radio
-    # stays free often enough for bonded HID devices to reconnect.
-    if scan_window > 0 and not info["connected"]:
-        run_command(["bluetoothctl", "--timeout", str(scan_window), "scan", "on"],
-                    timeout=scan_window + 5)
-        info = get_device_info_dbus(mac) or get_device_info_ctl(mac) or info
-
     is_connected = info["connected"]
-    rssi = info.get("rssi")
+    heard = None  # None = didn't scan; True/False = scan ran and (didn't) hear it
 
-    # A phone (an iPhone especially) does not hold a classic Bluetooth
-    # connection to a laptop — it just broadcasts BLE advertisements. BlueZ
-    # keeps RSSI/ManufacturerData fresh from those via its background passive
-    # scan and drops the RSSI property once the device stops being heard
-    # (BT switched off, walked out of range). So treat presence as "we have a
-    # current RSSI at or above threshold", with an active connection as an
-    # automatic pass. Relying on Connected alone left the UI stuck on
-    # "out of range" whenever the phone was nearby but not connected.
-    is_near = False
+    if is_connected:
+        # An active connection is proof of proximity on its own.
+        rssi = info.get("rssi")
+    elif scan_window > 0:
+        # Not connected: the only trustworthy signal is one measured live in an
+        # active scan window (see scan_for_rssi). A cached property is ignored.
+        rssi, heard = scan_for_rssi(mac, scan_window)
+        after = get_device_info_dbus(mac) or get_device_info_ctl(mac)
+        if after:
+            is_connected = after["connected"]
+            info["name"] = after.get("name", info["name"])
+            if is_connected and rssi is None:
+                rssi = after.get("rssi")
+    else:
+        # Scanning disabled by the caller: best-effort cached value.
+        rssi = info.get("rssi")
+
+    # Near == active connection, or a fresh signal at/above the threshold. A
+    # disconnected phone that a scan couldn't hear is treated as away even if
+    # BlueZ still reports a stale RSSI for it.
     if is_connected:
         is_near = (rssi is None) or (rssi >= threshold)
-    elif rssi is not None:
-        is_near = (rssi >= threshold)
+    elif heard is False:
+        is_near = False
+    else:
+        is_near = (rssi is not None and rssi >= threshold)
 
     return {
         "status": "ok",
