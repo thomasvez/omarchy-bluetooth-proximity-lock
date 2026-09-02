@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.hex0x90.proximity",
+  "name": "Proximity Lock",
+  "version": "1.0.0",
+  "author": "hex0x90",
+  "license": "MIT",
+  "description": "Keeps your Omarchy computer awake while your phone is nearby and locks immediately when you walk away.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Proximity Lock",
+    "description": "Automatic lock and stay-awake management based on your phone's Bluetooth proximity.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "targetMac": "",
+      "targetName": "",
+      "rssiThreshold": -78,
+      "pollIntervalSeconds": 4,
+      "awayGraceCount": 3,
+      "immediateLock": true,
+      "notifyOnStateChange": true,
+      "enabled": true
+    },
+    "schema": [
+      {
+        "key": "targetMac",
+        "type": "string",
+        "label": "Phone Bluetooth MAC Address",
+        "description": "MAC address of your paired phone (e.g. AA:BB:CC:DD:EE:FF).",
+        "defaultValue": ""
+      },
+      {
+        "key": "rssiThreshold",
+        "type": "number",
+        "label": "RSSI Signal Threshold (dBm)",
+        "description": "Signal strength threshold. Closer is higher (e.g. -70 = close, -85 = farther).",
+        "defaultValue": -78
+      },
+      {
+        "key": "pollIntervalSeconds",
+        "type": "number",
+        "label": "Poll Interval (seconds)",
+        "description": "How often to check phone proximity.",
+        "defaultValue": 4
+      },
+      {
+        "key": "awayGraceCount",
+        "type": "number",
+        "label": "Consecutive Missed Checks Before Lock",
+        "description": "Prevents accidental locks if the phone briefly drops signal in a pocket.",
+        "defaultValue": 3
+      },
+      {
+        "key": "immediateLock",
+        "type": "boolean",
+        "label": "Immediate Lock When Away",
+        "description": "Instantly lock screen when you walk away, instead of waiting for standard idle timer.",
+        "defaultValue": true
+      },
+      {
+        "key": "notifyOnStateChange",
+        "type": "boolean",
+        "label": "Show Desktop Notifications",
+        "description": "Notify when computer unlocks/stays awake or locks due to proximity.",
+        "defaultValue": true
+      }
+    ]
+  }
+}

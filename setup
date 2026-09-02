@@ -1,0 +1,29 @@
+#!/bin/bash
+set -euo pipefail
+
+PLUGIN_ID="io.github.hex0x90.proximity"
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEST_DIR="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
+
+echo "==> Installing Omarchy Proximity Lock plugin..."
+
+mkdir -p "$HOME/.config/omarchy/plugins"
+
+if [ -L "$DEST_DIR" ] || [ -d "$DEST_DIR" ]; then
+  rm -rf "$DEST_DIR"
+fi
+
+ln -s "$SRC_DIR" "$DEST_DIR"
+echo "==> Symlinked $SRC_DIR -> $DEST_DIR"
+
+if command -v omarchy-shell >/dev/null 2>&1; then
+  echo "==> Rescanning Omarchy plugins..."
+  omarchy-shell shell rescanPlugins || true
+fi
+
+if command -v omarchy >/dev/null 2>&1; then
+  echo "==> Enabling plugin $PLUGIN_ID..."
+  omarchy plugin enable "$PLUGIN_ID" || true
+fi
+
+echo "==> Proximity Lock plugin installed successfully!"
