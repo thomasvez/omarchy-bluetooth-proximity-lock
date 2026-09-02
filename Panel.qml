@@ -52,6 +52,12 @@ Panel {
   property var pairedDevices: []
   property bool loadingDevices: false
 
+  // Unique per instance; used to hold the shared poll lease (see Model.js) so
+  // that on a multi-monitor setup only one of the per-screen widget copies
+  // actually polls, notifies and drives the lock / stay-awake actions.
+  readonly property string instanceId: Math.random().toString(36).slice(2) + "-" + Date.now()
+  Component.onDestruction: Model.releasePollLease(root.instanceId)
+
   // Injected by BarWidget.qml: the bar button this popup anchors to, and the
   // bar-widget root that stands in as the popout identity. The bar tracks the
   // widget mounted in its slot (BarWidget.qml), not this nested panel, so
@@ -79,6 +85,9 @@ Panel {
 
   function triggerProximityCheck() {
     if (!root.pluginEnabled || !root.targetMac) return
+    // Only the lease holder probes — otherwise every monitor's copy would
+    // poll, notify and lock independently. claimPollLease() also renews it.
+    if (!Model.claimPollLease(root.instanceId, Date.now())) return
     if (probeProcess.running) return
 
     probeProcess.command = [
@@ -126,8 +135,12 @@ Panel {
         ]
         actionProcess.running = true
 
-        if (root.notifyOnStateChange && root.bar) {
-          root.bar.run("omarchy-notification-send '📱 Phone in range' 'Computer stay-awake activated'")
+        if (root.notifyOnStateChange) {
+          // execArgv, not bar.run: bar.run() feeds the string to `bash -lc`.
+          // These messages are static, but keeping them off the shell means a
+          // later edit that interpolates a device name (attacker-controlled
+          // Bluetooth advertising data) can't become command execution.
+          Util.execArgv(["omarchy-notification-send", "📱 Phone in range", "Computer stay-awake activated"])
         }
       } else {
         if (root.immediateLock) {
@@ -146,8 +159,8 @@ Panel {
           actionProcess.running = true
         }
 
-        if (root.notifyOnStateChange && root.bar) {
-          root.bar.run("omarchy-notification-send '📱 Phone away' 'Omarchy locked'")
+        if (root.notifyOnStateChange) {
+          Util.execArgv(["omarchy-notification-send", "📱 Phone away", "Omarchy locked"])
         }
       }
     }

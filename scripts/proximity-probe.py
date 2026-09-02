@@ -118,11 +118,20 @@ def get_device_info_ctl(mac):
     return {"mac": mac, "name": name, "connected": connected, "rssi": rssi}
 
 
+MAC_RE = re.compile(r"[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\Z")
+
+
 def probe_device(mac, threshold=-78, scan_window=0):
     if not mac or mac.strip() == "":
         return {"status": "no_device", "mac": "", "near": False, "connected": False, "rssi": None}
 
     mac = mac.strip()
+    # Only ever hand a well-formed address to bluetoothctl / gdbus. Every call
+    # site uses argv (no shell), so this is defence-in-depth, not the only
+    # guard — but it keeps a hand-edited or malformed targetMac from producing
+    # confusing failures or odd D-Bus object paths.
+    if not MAC_RE.match(mac):
+        return {"status": "not_found", "mac": mac, "near": False, "connected": False, "rssi": None}
     info = get_device_info_dbus(mac) or get_device_info_ctl(mac)
     if not info:
         return {"status": "not_found", "mac": mac, "near": False, "connected": False, "rssi": None}

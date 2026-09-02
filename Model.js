@@ -2,6 +2,34 @@
 
 // Helper functions for Omarchy Proximity Lock plugin
 
+// --- Poll lease ------------------------------------------------------------
+// The bar (and therefore this widget) is instantiated once per monitor, so
+// without coordination every screen runs its own proximity poll — and fires
+// its own notifications and lock/stay-awake actions. `.pragma library` state
+// is shared across the whole QML engine, so it works as a single-holder lease:
+// only the holder polls. The holder renews on every successful call; a holder
+// that goes away (screen removed, shell teardown) either releases explicitly
+// or lets the lease expire so another instance can take over.
+var _leaseHolder = null
+var _leaseRenewedAt = 0
+var LEASE_TTL_MS = 25000
+
+function claimPollLease(id, nowMs) {
+  if (_leaseHolder === null || _leaseHolder === id || (nowMs - _leaseRenewedAt) > LEASE_TTL_MS) {
+    _leaseHolder = id
+    _leaseRenewedAt = nowMs
+    return true
+  }
+  return false
+}
+
+function releasePollLease(id) {
+  if (_leaseHolder === id) {
+    _leaseHolder = null
+    _leaseRenewedAt = 0
+  }
+}
+
 function plainText(str) {
   if (str === null || str === undefined) return ""
   return String(str).replace(/<[^>]*>/g, "")
