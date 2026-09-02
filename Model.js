@@ -112,10 +112,10 @@ function tooltipMessage(enabled, targetName, isNear, rssi, connected, awayCount,
   }
   if (isNear) {
     var rssiStr = (rssi !== null && rssi !== undefined) ? (" (" + rssi + " dBm)") : ""
-    return targetName + ": Nearby" + rssiStr + "\nComputer kept awake"
+    return targetName + ": Nearby" + rssiStr + "\nScreen kept awake"
   }
   if (connected) {
     return targetName + ": Connected but weak signal (" + rssi + " dBm)\nGrace: " + awayCount + "/" + graceLimit
   }
-  return targetName + ": Away / Disconnected\nComputer locked"
+  return targetName + ": Away\nScreen locks on idle (auto-locked on departure)"
 }

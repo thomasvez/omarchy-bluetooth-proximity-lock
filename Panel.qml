@@ -129,11 +129,12 @@ Panel {
         // The messages are static, but keeping them off the shell means a
         // later edit that interpolates a device name (attacker-controlled
         // Bluetooth advertising data) can't become command execution.
-        Util.execArgv(["omarchy-notification-send", "📱 Phone in range", "Computer stay-awake activated"])
+        Util.execArgv(["omarchy-notification-send", "📱 Phone in range", "Screen kept awake"])
     } else {
       runHelper(root.immediateLock ? "--lock" : "--allow-idle")
       if (root.notifyOnStateChange)
-        Util.execArgv(["omarchy-notification-send", "📱 Phone away", "Omarchy locked"])
+        Util.execArgv(["omarchy-notification-send", "📱 Phone away",
+                       root.immediateLock ? "Screen locked" : "Screen will lock when idle"])
     }
   }
 
@@ -312,7 +313,8 @@ Panel {
             title: root.targetName ? root.targetName : (root.targetMac ? root.targetMac : "Proximity Lock")
             meta: !root.pluginEnabled ? "Proximity tracking paused"
                   : root.deviceMissing ? "Not found in Bluetooth • tracking paused"
-                  : (root.isNear ? "Phone in range • Computer awake" : "Phone away • Computer locked")
+                  : root.isNear ? "Phone in range • screen kept awake"
+                  : (root.immediateLock ? "Phone away • screen auto-locks" : "Phone away • screen locks on idle")
             foreground: root.foreground
             fontFamily: root.fontFamily
             iconOpacity: (root.isNear && !root.deviceMissing) ? 1.0 : 0.6
