@@ -55,6 +55,15 @@ Panel {
 
   property var pairedDevices: []
   property bool loadingDevices: false
+  property bool showAllDevices: false
+
+  // The picker shows carried devices (phone, watch, ...) by default; the
+  // currently-selected device is always kept visible even if it'd be filtered.
+  readonly property var visibleDevices: root.showAllDevices ? root.pairedDevices
+    : root.pairedDevices.filter(function (d) {
+        return Model.isProximityToken(d.icon) || d.mac === root.targetMac
+      })
+  readonly property int hiddenDeviceCount: root.pairedDevices.length - root.visibleDevices.length
 
   // Unique per instance; used to hold the shared poll lease (see Model.js) so
   // that on a multi-monitor setup only one of the per-screen widget copies
@@ -512,7 +521,7 @@ Panel {
             }
 
             Repeater {
-              model: root.pairedDevices
+              model: root.visibleDevices
               delegate: Rectangle {
                 width: column.width
                 height: Style.space(34)
@@ -567,6 +576,25 @@ Panel {
                   font.bold: root.targetMac === modelData.mac
                   color: (root.targetMac === modelData.mac) ? root.positive : (modelData.connected ? root.positive : root.dim)
                 }
+              }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: root.showAllDevices || root.hiddenDeviceCount > 0
+              text: root.showAllDevices
+                    ? "Show fewer"
+                    : "Show all devices (" + root.hiddenDeviceCount + " hidden)"
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              color: showAllMouse.containsMouse ? root.foreground : root.dim
+
+              MouseArea {
+                id: showAllMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.showAllDevices = !root.showAllDevices
               }
             }
           }

@@ -31,9 +31,9 @@ phone required**, it just uses the existing pairing.
 - **Top-bar widget** — one glanceable phone glyph (green nearby, red away,
   dimmed when paused or the device is unpaired). Middle-click forces a check,
   right-click locks now.
-- **Settings panel** — 1-click paired-device picker, live signal meter,
-  Close / Medium / Far range selector (−68 / −78 / −88 dBm), immediate-lock
-  toggle, pause switch.
+- **Settings panel** — 1-click device picker (phones / watches; desk
+  accessories hidden behind "show all"), live signal meter, Close / Medium /
+  Far range selector (−68 / −78 / −88 dBm), immediate-lock toggle, pause switch.
 
 ## How it behaves
 

@@ -65,6 +65,28 @@ function deviceGlyph(icon) {
   }
 }
 
+// Devices you carry make sense as a proximity token; desk accessories (mouse,
+// keyboard, headphones, speaker...) don't. The picker hides the accessories
+// unless the user asks to see everything.
+function isProximityToken(icon) {
+  switch (String(icon || "")) {
+    case "input-mouse":
+    case "input-keyboard":
+    case "input-gaming":
+    case "input-tablet":
+    case "audio-headphones":
+    case "audio-headset":
+    case "audio-card":
+    case "multimedia-player":
+    case "printer":
+    case "camera-photo":
+    case "camera-video":
+      return false
+    default:  // phone, watch, computer, unknown, ...
+      return true
+  }
+}
+
 function rssiToBars(rssi) {
   if (rssi === null || rssi === undefined) return 2
   if (rssi >= -60) return 4
