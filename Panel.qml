@@ -21,7 +21,12 @@ Panel {
   readonly property string targetMac: Model.plainText(setting("targetMac", ""))
   readonly property string targetName: Model.plainText(setting("targetName", ""))
   readonly property int rssiThreshold: parseInt(setting("rssiThreshold", -78), 10) || -78
-  readonly property int pollIntervalSeconds: Math.max(2, parseInt(setting("pollIntervalSeconds", 4), 10) || 4)
+  // Seconds of BLE discovery per poll, used to refresh the phone's RSSI when
+  // it isn't holding an active connection (the usual case for a phone). The
+  // poll interval is floored above this so the LE radio always gets an idle
+  // gap for bonded HID devices to reconnect.
+  readonly property int scanWindowSeconds: 4
+  readonly property int pollIntervalSeconds: Math.max(root.scanWindowSeconds + 4, parseInt(setting("pollIntervalSeconds", 10), 10) || 10)
   readonly property int awayGraceCount: Math.max(1, parseInt(setting("awayGraceCount", 3), 10) || 3)
   readonly property bool immediateLock: setting("immediateLock", true) !== false
   readonly property bool notifyOnStateChange: setting("notifyOnStateChange", true) !== false
@@ -70,7 +75,8 @@ Panel {
       "python3",
       Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
       "--probe", root.targetMac,
-      "--threshold", String(root.rssiThreshold)
+      "--threshold", String(root.rssiThreshold),
+      "--scan-window", String(root.scanWindowSeconds)
     ]
     probeProcess.running = true
   }

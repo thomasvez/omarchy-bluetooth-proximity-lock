@@ -22,7 +22,7 @@
       "targetMac": "AA:BB:CC:11:22:33",
       "targetName": "My Phone",
       "rssiThreshold": -78,
-      "pollIntervalSeconds": 4,
+      "pollIntervalSeconds": 10,
       "awayGraceCount": 3,
       "immediateLock": true,
       "notifyOnStateChange": true,
@@ -54,8 +54,8 @@
         "key": "pollIntervalSeconds",
         "type": "number",
         "label": "Poll Interval (seconds)",
-        "description": "How often to check phone proximity.",
-        "defaultValue": 4
+        "description": "How often to check phone proximity. Each check runs a short Bluetooth scan; lower values keep the radio busier and slow down other Bluetooth devices reconnecting. Minimum 8.",
+        "defaultValue": 10
       },
       {
         "key": "awayGraceCount",

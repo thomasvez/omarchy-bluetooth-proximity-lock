@@ -97,47 +97,64 @@ def get_device_info_dbus(mac):
         "rssi": rssi
     }
 
-def probe_device(mac, threshold=-78):
+def get_device_info_ctl(mac):
+    """Fallback to `bluetoothctl info` when the DBus query returns nothing."""
+    code, out, _ = run_command(["bluetoothctl", "info", mac], timeout=2)
+    if code != 0:
+        return None
+    connected = ("Connected: yes" in out)
+    rssi = None
+    name = mac
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("RSSI:"):
+            # bluetoothctl prints "RSSI: 0xffffffd6 (-42)" — take the signed
+            # decimal in parens, or a bare "RSSI: -42".
+            m = re.search(r"RSSI:\s*(?:0x[0-9a-fA-F]+\s*)?\(?(-?\d+)\)?", line)
+            if m:
+                rssi = int(m.group(1))
+        elif line.startswith("Alias:"):
+            name = line.split(":", 1)[1].strip()
+    return {"mac": mac, "name": name, "connected": connected, "rssi": rssi}
+
+
+def probe_device(mac, threshold=-78, scan_window=0):
     if not mac or mac.strip() == "":
         return {"status": "no_device", "mac": "", "near": False, "connected": False, "rssi": None}
-    
+
     mac = mac.strip()
-    info = get_device_info_dbus(mac)
-    
+    info = get_device_info_dbus(mac) or get_device_info_ctl(mac)
     if not info:
-        code, out, _ = run_command(["bluetoothctl", "info", mac], timeout=2)
-        if code == 0:
-            connected = ("Connected: yes" in out)
-            rssi = None
-            for line in out.splitlines():
-                if "RSSI:" in line:
-                    try:
-                        rssi = int(line.split(":", 1)[1].strip())
-                    except ValueError:
-                        pass
-            name = mac
-            for line in out.splitlines():
-                if line.strip().startswith("Alias:"):
-                    name = line.split(":", 1)[1].strip()
-            info = {
-                "mac": mac,
-                "name": name,
-                "connected": connected,
-                "rssi": rssi
-            }
-        else:
-            return {"status": "not_found", "mac": mac, "near": False, "connected": False, "rssi": None}
-    
+        return {"status": "not_found", "mac": mac, "near": False, "connected": False, "rssi": None}
+
+    # BlueZ drops a non-connected device's RSSI within a few seconds of the
+    # last discovery ending, so a phone sitting right next to the laptop reads
+    # as rssi=None unless something is actively scanning. Run a short discovery
+    # window, then re-read. Skip it when already connected (RSSI isn't needed)
+    # and keep the window brief + let the caller poll slowly, so the LE radio
+    # stays free often enough for bonded HID devices to reconnect.
+    if scan_window > 0 and not info["connected"]:
+        run_command(["bluetoothctl", "--timeout", str(scan_window), "scan", "on"],
+                    timeout=scan_window + 5)
+        info = get_device_info_dbus(mac) or get_device_info_ctl(mac) or info
+
     is_connected = info["connected"]
     rssi = info.get("rssi")
-    
+
+    # A phone (an iPhone especially) does not hold a classic Bluetooth
+    # connection to a laptop — it just broadcasts BLE advertisements. BlueZ
+    # keeps RSSI/ManufacturerData fresh from those via its background passive
+    # scan and drops the RSSI property once the device stops being heard
+    # (BT switched off, walked out of range). So treat presence as "we have a
+    # current RSSI at or above threshold", with an active connection as an
+    # automatic pass. Relying on Connected alone left the UI stuck on
+    # "out of range" whenever the phone was nearby but not connected.
     is_near = False
     if is_connected:
-        if rssi is not None:
-            is_near = (rssi >= threshold)
-        else:
-            is_near = True
-            
+        is_near = (rssi is None) or (rssi >= threshold)
+    elif rssi is not None:
+        is_near = (rssi >= threshold)
+
     return {
         "status": "ok",
         "mac": mac,
@@ -175,6 +192,8 @@ def main():
     parser.add_argument("--list-devices", action="store_true", help="List paired Bluetooth devices")
     parser.add_argument("--probe", type=str, help="Probe MAC address for proximity")
     parser.add_argument("--threshold", type=int, default=-78, help="RSSI threshold in dBm")
+    parser.add_argument("--scan-window", type=int, default=0,
+                        help="Seconds of BLE discovery to refresh RSSI when the device is not connected (0 = off)")
     parser.add_argument("--stay-awake", action="store_true", help="Set Omarchy to stay awake")
     parser.add_argument("--allow-idle", action="store_true", help="Allow Omarchy to idle")
     parser.add_argument("--lock", action="store_true", help="Trigger Omarchy lock screen")
@@ -185,7 +204,7 @@ def main():
         devices = list_paired_devices()
         print(json.dumps(devices))
     elif args.probe:
-        res = probe_device(args.probe, threshold=args.threshold)
+        res = probe_device(args.probe, threshold=args.threshold, scan_window=args.scan_window)
         print(json.dumps(res))
     elif args.stay_awake:
         set_omarchy_stay_awake(True)

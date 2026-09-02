@@ -6,9 +6,9 @@ A native **Omarchy 4 (Quattro)** plugin that keeps your computer unlocked and aw
 
 ## Features
 
-- **Proximity-Based Stay-Awake**: Automatically detects your phone via Bluetooth RSSI / connection state and prevents the screensaver or lock screen while you are at your desk.
+- **Proximity-Based Stay-Awake**: Automatically detects your phone via Bluetooth RSSI (or an active connection, when there is one) and prevents the screensaver or lock screen while you are at your desk.
 - **Immediate Lock on Departure**: Automatically triggers `omarchy-system-lock` when your phone signal drops or you walk away.
-- **Safe Bluetooth Polling**: Queries BlueZ DBus properties without running disruptive discovery scans, preserving connections for other Bluetooth devices (mice, keyboards, headphones).
+- **Duty-Cycled Bluetooth Polling**: A phone rarely holds an active Bluetooth connection to a laptop, so each poll runs a short (~4 s) BLE discovery window to refresh the phone's RSSI, then leaves the radio idle for the rest of the interval so bonded devices (mice, keyboards, headphones) can still reconnect. Raise **Poll Interval** to widen that idle gap.
 - **Interactive Top-Bar Widget**:
   - Live glanceable icon (`📱 🔓` when nearby & awake, `📱 🔒` when locked/away, `📱 ⏸` when paused).
   - Hover tooltip with live RSSI signal strength (dBm) and connection status.
