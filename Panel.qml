@@ -314,7 +314,7 @@ Panel {
             meta: !root.pluginEnabled ? "Proximity tracking paused"
                   : root.deviceMissing ? "Not found in Bluetooth • tracking paused"
                   : root.isNear ? "Phone in range • screen kept awake"
-                  : (root.immediateLock ? "Phone away • screen auto-locks" : "Phone away • screen locks on idle")
+                  : "Phone away • waiting for it to return"
             foreground: root.foreground
             fontFamily: root.fontFamily
             iconOpacity: (root.isNear && !root.deviceMissing) ? 1.0 : 0.6

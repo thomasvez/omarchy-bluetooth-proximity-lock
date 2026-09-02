@@ -117,5 +117,5 @@ function tooltipMessage(enabled, targetName, isNear, rssi, connected, awayCount,
   if (connected) {
     return targetName + ": Connected but weak signal (" + rssi + " dBm)\nGrace: " + awayCount + "/" + graceLimit
   }
-  return targetName + ": Away\nScreen locks on idle (auto-locked on departure)"
+  return targetName + ": Away\nLocks the screen the moment it leaves range"
 }
