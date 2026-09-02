@@ -9,7 +9,7 @@ import "Model.js" as Model
 Panel {
   id: root
   moduleName: "io.github.hex0x90.proximity"
-  ipcTarget: "proximity"
+  ipcTarget: "io.github.hex0x90.proximity"
   manageIpc: false
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
@@ -37,9 +37,29 @@ Panel {
   property var pairedDevices: []
   property bool loadingDevices: false
 
+  // Injected by BarWidget.qml: the bar button this popup anchors to, and the
+  // bar-widget root that stands in as the popout identity. The bar tracks the
+  // widget mounted in its slot (BarWidget.qml), not this nested panel, so
+  // popout coordination and switchPanelFrom must use that widget.
+  property var anchorItem: null
+  property var hostWidget: null
+  readonly property var barIdentity: hostWidget || root
+
+  // BarWidget.open() (SUPER-hotkey / IPC) routes here; same lifecycle as a
+  // click, kept as a named entry point to match the bar-widget contract.
+  function openFromHotkey() {
+    root.open()
+  }
+
   function toggle() {
     if (root.opened) root.close()
     else root.open()
+  }
+
+  function switchPanel(direction) {
+    if (root.bar && typeof root.bar.switchPanelFrom === "function")
+      return root.bar.switchPanelFrom(root.barIdentity, direction)
+    return false
   }
 
   function triggerProximityCheck() {
@@ -199,54 +219,11 @@ Panel {
     onExited: function() { root.loadingDevices = false }
   }
 
-  IpcHandler {
-    target: "io.github.hex0x90.proximity"
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function toggle(): void { root.toggle() }
-    function lock(): void { root.lockNow() }
-    function refresh(): void { root.triggerProximityCheck(); root.refreshDevices() }
-  }
-
-  // --- Slim Bar Button ---
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
-
-  WidgetButton {
-    id: button
-    anchors.fill: parent
-    bar: root.bar
-    text: {
-      if (!root.pluginEnabled) return "📱 ⏸"
-      if (!root.targetMac) return "📱 ⚙"
-      return root.isNear ? "📱 🔓" : "📱 🔒"
-    }
-    color: {
-      if (!root.pluginEnabled) return Qt.darker(root.foreground, 1.6)
-      if (!root.targetMac) return root.dim
-      return root.isNear ? "#2ecc71" : "#e74c3c"
-    }
-    tooltipText: {
-      if (!root.pluginEnabled) return "Proximity Lock: Paused (Click to configure)"
-      if (!root.targetMac) return "Proximity Lock: No device selected (Click to configure)"
-      var name = root.targetName ? root.targetName : root.targetMac
-      var rssiInfo = (root.currentRssi !== null) ? (" (" + root.currentRssi + " dBm)") : ""
-      return name + ": " + (root.isNear ? "In range" : "Away") + rssiInfo + " • Click for settings, Right-click to lock"
-    }
-    onPressed: function(buttonCode) {
-      if (buttonCode === Qt.RightButton) {
-        root.lockNow()
-      } else {
-        root.toggle()
-      }
-    }
-  }
-
   // --- Dropdown Panel Surface ---
   KeyboardPanel {
     id: panel
-    anchorItem: button
-    owner: root
+    anchorItem: root.anchorItem
+    owner: root.barIdentity
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
