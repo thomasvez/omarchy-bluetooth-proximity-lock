@@ -6,7 +6,7 @@ import "Model.js" as Model
 
 BarWidget {
   id: root
-  moduleName: "io.github.hex0x90.proximity"
+  moduleName: "io.github.thomasvez.proximity"
 
   function injectPanel() {
     var target = panelLoader.item
@@ -71,7 +71,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "io.github.hex0x90.proximity"
+    target: "io.github.thomasvez.proximity"
 
     function open(): void { root.open() }
     function close(): void { root.close() }

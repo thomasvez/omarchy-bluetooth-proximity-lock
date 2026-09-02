@@ -8,8 +8,8 @@ import "Model.js" as Model
 
 Panel {
   id: root
-  moduleName: "io.github.hex0x90.proximity"
-  ipcTarget: "io.github.hex0x90.proximity"
+  moduleName: "io.github.thomasvez.proximity"
+  ipcTarget: "io.github.thomasvez.proximity"
   manageIpc: false
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground

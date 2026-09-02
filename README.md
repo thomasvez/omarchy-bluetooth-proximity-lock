@@ -62,9 +62,9 @@ This symlinks the plugin into `~/.config/omarchy/plugins/`, rescans, and
 enables it. Or manually:
 
 ```bash
-ln -s "$PWD" ~/.config/omarchy/plugins/io.github.hex0x90.proximity
+ln -s "$PWD" ~/.config/omarchy/plugins/io.github.thomasvez.proximity
 omarchy-shell shell rescanPlugins
-omarchy plugin enable io.github.hex0x90.proximity
+omarchy plugin enable io.github.thomasvez.proximity
 ```
 
 ### Pair your phone
