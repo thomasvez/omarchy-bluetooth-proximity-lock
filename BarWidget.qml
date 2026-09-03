@@ -93,7 +93,8 @@ BarWidget {
         targetName: root.targetName,
         near: root.isNear,
         connected: root.isConnected,
-        rssi: root.currentRssi
+        rssi: root.currentRssi,
+        lockCountdown: panelLoader.item ? panelLoader.item.lockCountdown : 0
       })
     }
   }

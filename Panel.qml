@@ -47,6 +47,9 @@ Panel {
   }
   readonly property bool notifyOnStateChange: setting("notifyOnStateChange", true) !== false
   readonly property bool pluginEnabled: setting("enabled", true) !== false
+  // Optional user shell commands run on the transitions (e.g. "playerctl pause").
+  readonly property string onAwayCommand: String(setting("onAwayCommand", "") || "")
+  readonly property string onReturnCommand: String(setting("onReturnCommand", "") || "")
 
   // Live State
   property bool isNear: false
@@ -135,46 +138,109 @@ Panel {
     actionProcess.running = true
   }
 
+  // Live countdown between "phone left" and the lock.
+  property int lockCountdown: 0
+  property string lockNotifId: ""
+
+  // A user-supplied shell command (onAwayCommand / onReturnCommand). This one
+  // legitimately needs the shell — it's the user's own config, same trust as
+  // any "run this command" setting.
+  function runUserCommand(cmd) {
+    if (cmd && cmd.trim() !== "") Util.execDetached(cmd)
+  }
+
+  Process {
+    id: awayNotifyProcess
+    // -p prints the server-assigned id so the next tick can replace this
+    // notification in place rather than stacking a new one every second.
+    stdout: SplitParser {
+      onRead: function(line) {
+        var id = String(line).trim()
+        if (id !== "") root.lockNotifId = id
+      }
+    }
+  }
+
+  // Send (or, once lockNotifId is known, update) the away notification.
+  //   secondsLeft > 0  -> "Locking in N s" with a Keep-unlocked action
+  //   secondsLeft <= 0 -> a short terminal message (title/body), no action
+  function sendAwayNotification(secondsLeft, title, body) {
+    if (!root.notifyOnStateChange) return
+    var cmd = ["omarchy-notification-send"]
+    if (root.lockNotifId !== "") cmd.push("-r", root.lockNotifId)
+    cmd.push("-p")
+    if (secondsLeft > 0) {
+      cmd.push("📱 Phone away", "Locking the screen in " + secondsLeft + " s",
+               "-t", "1500",
+               "--exec", "omarchy-shell", "-q", root.moduleName, "keepUnlocked")
+    } else {
+      cmd.push(title || "📱 Phone away", body || "Screen locked", "-t", "2500")
+    }
+    awayNotifyProcess.command = cmd
+    awayNotifyProcess.running = true
+  }
+
+  // Commit to "you have left": lock (or re-arm idle) and run onAwayCommand.
+  function commitAway() {
+    pendingLockTimer.stop()
+    root.lockCountdown = 0
+    runHelper(root.immediateLock ? "--lock" : "--allow-idle")
+    root.runUserCommand(root.onAwayCommand)
+    root.sendAwayNotification(0, "📱 Phone away",
+                              root.immediateLock ? "Screen locked" : "Screen will lock when idle")
+    root.lockNotifId = ""
+  }
+
   // Side effects for a near<->away transition. Only ever called by the copy
   // that holds the poll lease, so notifications and the lock fire exactly once
   // no matter how many monitors (and therefore widget copies) exist.
   function applyTransition(nowNear) {
     if (nowNear) {
+      var wasCountingDown = pendingLockTimer.running
       pendingLockTimer.stop()
+      root.lockCountdown = 0
       runHelper("--stay-awake")
-      if (root.notifyOnStateChange)
-        // execArgv, not bar.run: bar.run() feeds the string to `bash -lc`.
-        // The messages are static, but keeping them off the shell means a
-        // later edit that interpolates a device name (attacker-controlled
-        // Bluetooth advertising data) can't become command execution.
-        Util.execArgv(["omarchy-notification-send", "📱 Phone in range", "Screen kept awake"])
+      root.runUserCommand(root.onReturnCommand)
+      if (root.notifyOnStateChange) {
+        if (wasCountingDown && root.lockNotifId !== "")
+          root.sendAwayNotification(0, "📱 Phone back", "Lock cancelled — screen kept awake")
+        else
+          // execArgv, not bar.run: these are static, but keeping them off the
+          // shell means a later edit that interpolates a device name can't
+          // become command execution.
+          Util.execArgv(["omarchy-notification-send", "📱 Phone in range", "Screen kept awake"])
+      }
+      root.lockNotifId = ""
     } else if (root.immediateLock && root.lockDelaySeconds > 0) {
-      // Count down, and give the user a way to wave it off.
+      // Start the visible countdown; the lock and onAwayCommand wait for it.
+      root.lockNotifId = ""
+      root.lockCountdown = root.lockDelaySeconds
+      root.sendAwayNotification(root.lockCountdown)
       pendingLockTimer.restart()
-      if (root.notifyOnStateChange)
-        Util.execArgv(["omarchy-notification-send", "📱 Phone away",
-                       "Locking the screen in " + root.lockDelaySeconds + " s",
-                       "-t", String(root.lockDelaySeconds * 1000),
-                       "--exec", "omarchy-shell", "-q", root.moduleName, "keepUnlocked"])
     } else {
-      runHelper(root.immediateLock ? "--lock" : "--allow-idle")
-      if (root.notifyOnStateChange)
-        Util.execArgv(["omarchy-notification-send", "📱 Phone away",
-                       root.immediateLock ? "Screen locked" : "Screen will lock when idle"])
+      commitAway()
     }
   }
 
-  // Fires lockDelaySeconds after the phone leaves, unless the notification's
-  // "Keep unlocked" button was tapped (Model.lockDismissedWithin) or the phone
-  // came back (applyTransition(true) stops the timer).
+  // Ticks once a second while the phone is away; updates the countdown
+  // notification and locks at zero. Cancelled if the phone returns
+  // (applyTransition) or "Keep unlocked" was tapped (Model.lockDismissedWithin).
   Timer {
     id: pendingLockTimer
-    interval: Math.max(1, root.lockDelaySeconds) * 1000
-    repeat: false
+    interval: 1000
+    repeat: true
     onTriggered: {
-      if (root.pluginEnabled && !root.deviceMissing
-          && !Model.lockDismissedWithin(root.lockDelaySeconds * 1000 + 3000))
-        root.runHelper("--lock")
+      if (!root.pluginEnabled || root.deviceMissing
+          || Model.lockDismissedWithin(root.lockDelaySeconds * 1000 + 5000)) {
+        pendingLockTimer.stop()
+        root.lockCountdown = 0
+        return
+      }
+      root.lockCountdown -= 1
+      if (root.lockCountdown > 0)
+        root.sendAwayNotification(root.lockCountdown)
+      else
+        root.commitAway()
     }
   }
 
@@ -184,6 +250,10 @@ Panel {
   function keepUnlocked() {
     Model.noteLockDismissed()
     pendingLockTimer.stop()
+    root.lockCountdown = 0
+    if (root.lockNotifId !== "")
+      root.sendAwayNotification(0, "📱 Kept unlocked", "Proximity lock cancelled")
+    root.lockNotifId = ""
   }
 
   // The probe writes its result to stateFilePath; every widget copy (one per
@@ -399,6 +469,7 @@ Panel {
             meta: !root.pluginEnabled ? "Proximity tracking paused"
                   : root.deviceMissing ? "Not found in Bluetooth • tracking paused"
                   : root.isNear ? "Phone in range • screen kept awake"
+                  : pendingLockTimer.running ? ("Phone away • locking in " + root.lockCountdown + " s")
                   : "Phone away • waiting for it to return"
             foreground: root.foreground
             fontFamily: root.fontFamily
@@ -411,6 +482,35 @@ Panel {
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.displayLarge
               }
+            }
+          }
+
+          // 1b. Lock countdown banner (only while counting down)
+          Rectangle {
+            width: parent.width
+            height: Style.space(34)
+            radius: Style.space(5)
+            visible: pendingLockTimer.running
+            color: keepMouse.containsMouse ? Qt.alpha(root.negative, 0.25) : Qt.alpha(root.negative, 0.12)
+            border.color: root.negative
+            border.width: 1
+
+            MouseArea {
+              id: keepMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.keepUnlocked()
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              anchors.centerIn: parent
+              text: "Locking in " + root.lockCountdown + " s  —  tap to keep unlocked"
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+              color: root.negative
             }
           }
 
