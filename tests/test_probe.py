@@ -39,6 +39,38 @@ def test_scan_empty(bt):
     assert probe.scan_for_rssi(MAC, 4) == (None, False)
 
 
+def test_scan_samples_keeps_every_sighting_in_order(bt):
+    bt.scan = "\n".join([chg_line(MAC, -50), chg_line(OTHER, -70), chg_line(MAC, -48),
+                         chg_line(MAC, -52)])
+    assert probe.scan_samples(MAC, 6) == [-50, -48, -52]
+
+
+# --- calibrate -----------------------------------------------------------
+
+def test_calibrate_suggests_median_minus_margin(bt):
+    bt.scan = "\n".join(chg_line(MAC, r) for r in (-44, -46, -50, -48, -46))
+    out = probe.calibrate(MAC, window=6, margin=20)
+    assert out["status"] == "ok"
+    assert out["count"] == 5
+    assert out["median"] == -46
+    assert out["strongest"] == -44 and out["weakest"] == -50
+    assert out["threshold"] == -66  # -46 - 20
+
+
+def test_calibrate_clamps_the_threshold(bt):
+    bt.scan = "\n".join(chg_line(MAC, r) for r in (-30, -31, -32))  # very close
+    assert probe.calibrate(MAC, window=6, margin=20)["threshold"] == -55  # clamped
+
+
+def test_calibrate_unheard(bt):
+    bt.scan = chg_line(OTHER, -60)
+    assert probe.calibrate(MAC, window=3) == {"status": "unheard", "count": 0}
+
+
+def test_calibrate_rejects_bad_mac(bt):
+    assert probe.calibrate("nope") == {"status": "not_found", "count": 0}
+
+
 # --- bluetoothctl info RSSI parsing ---------------------------------------
 
 @pytest.mark.parametrize("rssi_field,expected", [

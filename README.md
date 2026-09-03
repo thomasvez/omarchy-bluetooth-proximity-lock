@@ -33,7 +33,8 @@ phone required**, it just uses the existing pairing.
   right-click locks now.
 - **Settings panel** — 1-click device picker (phones / watches; desk
   accessories hidden behind "show all"), live signal meter, Close / Medium /
-  Far range selector (−68 / −78 / −88 dBm), immediate-lock toggle, pause switch.
+  Far range presets *or* **Calibrate** (samples the signal where you sit and
+  sets the threshold from it), immediate-lock toggle, pause switch.
 
 ## How it behaves
 

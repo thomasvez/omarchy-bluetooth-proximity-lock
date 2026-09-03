@@ -121,29 +121,56 @@ def get_device_info_ctl(mac):
 MAC_RE = re.compile(r"[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\Z")
 
 
-def scan_for_rssi(mac, window):
-    """Run an active discovery window and return the device's RSSI *only if it
-    was actually heard during the scan*.
+def scan_samples(mac, window):
+    """Every RSSI value heard for `mac` during an active discovery window, in
+    the order bluetoothctl streamed them.
 
     BlueZ keeps a bonded device's last RSSI property indefinitely after it goes
     silent (an iPhone with Find My does this on BT-off, airplane mode, even
     powered off), so the cached property can't tell "here" from "gone". The
     per-device lines bluetoothctl streams while scanning only appear for a
     device that is genuinely advertising right now, so that's what we trust.
-    Returns (rssi_or_None, heard_bool).
     """
     _, out, _ = run_command(["bluetoothctl", "--timeout", str(window), "scan", "on"],
                             timeout=window + 5)
-    rssi = None
-    heard = False
+    samples = []
     for line in out.splitlines():
         if mac not in line or "RSSI" not in line:
             continue
         m = re.search(r"RSSI(?:[:=]|\s+is)?\s*(?:0x[0-9a-fA-F]+\s*)?\(?(-?\d+)\)?", line)
         if m:
-            rssi = int(m.group(1))
-            heard = True
-    return rssi, heard
+            samples.append(int(m.group(1)))
+    return samples
+
+
+def scan_for_rssi(mac, window):
+    """(rssi_or_None, heard_bool) — the most recent live sighting, if any."""
+    samples = scan_samples(mac, window)
+    return (samples[-1], True) if samples else (None, False)
+
+
+def calibrate(mac, window=8, margin=20):
+    """Sample the device where the user is sitting and suggest a threshold:
+    the median observed signal, minus a margin so normal fidgeting doesn't
+    cross it but leaving the area does."""
+    mac = (mac or "").strip()
+    if not MAC_RE.match(mac):
+        return {"status": "not_found", "count": 0}
+    samples = scan_samples(mac, window)
+    if not samples:
+        return {"status": "unheard", "count": 0}
+    ordered = sorted(samples)
+    median = ordered[len(ordered) // 2]
+    threshold = max(-95, min(-55, round(median) - margin))
+    return {
+        "status": "ok",
+        "count": len(samples),
+        "median": median,
+        "strongest": ordered[-1],
+        "weakest": ordered[0],
+        "margin": margin,
+        "threshold": threshold,
+    }
 
 
 def probe_device(mac, threshold=-78, scan_window=0):
@@ -225,7 +252,9 @@ def main():
     parser = argparse.ArgumentParser(description="Omarchy Proximity Helper")
     parser.add_argument("--list-devices", action="store_true", help="List paired Bluetooth devices")
     parser.add_argument("--probe", type=str, help="Probe MAC address for proximity")
+    parser.add_argument("--calibrate", type=str, help="Sample a device's signal and suggest a threshold")
     parser.add_argument("--threshold", type=int, default=-78, help="RSSI threshold in dBm")
+    parser.add_argument("--window", type=int, default=8, help="Seconds for --calibrate to sample")
     parser.add_argument("--scan-window", type=int, default=0,
                         help="Seconds of BLE discovery to measure RSSI when disconnected (0 = off)")
     parser.add_argument("--state-file", type=str, default="",
@@ -239,6 +268,8 @@ def main():
     if args.list_devices:
         devices = list_paired_devices()
         print(json.dumps(devices))
+    elif args.calibrate:
+        print(json.dumps(calibrate(args.calibrate, window=args.window)))
     elif args.probe:
         res = probe_device(args.probe, threshold=args.threshold, scan_window=args.scan_window)
         res["ts"] = time.time()

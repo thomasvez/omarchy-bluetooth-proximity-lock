@@ -80,6 +80,9 @@ BarWidget {
     function toggle(): void { root.togglePanel() }
     function refresh(): void { root.refresh() }
     function check(): void { root.refresh() }
+    function calibrate(): void {
+      if (panelLoader.item && panelLoader.item.calibrate) panelLoader.item.calibrate()
+    }
     function status(): string {
       return JSON.stringify({
         enabled: root.pluginEnabled,

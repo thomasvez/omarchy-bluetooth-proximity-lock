@@ -56,6 +56,8 @@ Panel {
   property var pairedDevices: []
   property bool loadingDevices: false
   property bool showAllDevices: false
+  property bool calibrating: false
+  readonly property int calibrateSeconds: 8
 
   // The picker shows carried devices (phone, watch, ...) by default; the
   // currently-selected device is always kept visible even if it'd be filtered.
@@ -210,6 +212,31 @@ Panel {
     devicesProcess.running = true
   }
 
+  // Measure the phone where the user is sitting and set the threshold from it.
+  function calibrate() {
+    if (!root.targetMac || root.calibrating) return
+    root.calibrating = true
+    calibrateProcess.command = [
+      "python3",
+      Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
+      "--calibrate", root.targetMac,
+      "--window", String(root.calibrateSeconds)
+    ]
+    calibrateProcess.running = true
+  }
+
+  function applyCalibration(data) {
+    if (data.status === "ok") {
+      root.updateSetting("rssiThreshold", data.threshold)
+      if (root.notifyOnStateChange)
+        Util.execArgv(["omarchy-notification-send", "📡 Proximity calibrated",
+                       "Threshold set to " + data.threshold + " dBm (" + data.median + " dBm where you sit)"])
+    } else {
+      Util.execArgv(["omarchy-notification-send", "📡 Calibration failed",
+                     "Couldn't hear the phone — keep it nearby with Bluetooth on and try again"])
+    }
+  }
+
   function updateSetting(key, value) {
     if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
     var next = {}
@@ -283,6 +310,16 @@ Panel {
       }
     }
     onExited: function() { root.loadingDevices = false }
+  }
+
+  Process {
+    id: calibrateProcess
+    stdout: SplitParser {
+      onRead: function(line) {
+        try { root.applyCalibration(JSON.parse(line)) } catch (e) {}
+      }
+    }
+    onExited: function() { root.calibrating = false }
   }
 
   // --- Dropdown Panel Surface ---
@@ -483,6 +520,36 @@ Panel {
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
+            }
+
+            Rectangle {
+              width: parent.width
+              height: Style.space(30)
+              radius: Style.space(5)
+              color: root.calibrating ? root.selectedFill
+                   : calMouse.containsMouse ? root.hoverFill : root.trackFill
+              border.color: root.hairline
+              border.width: 1
+
+              MouseArea {
+                id: calMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                enabled: !root.calibrating
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.calibrate()
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.centerIn: parent
+                text: root.calibrating
+                      ? "Measuring signal…  (" + root.calibrateSeconds + "s)"
+                      : "󰆢  Calibrate to where you sit"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                color: root.foreground
+              }
             }
           }
 
