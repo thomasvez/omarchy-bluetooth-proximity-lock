@@ -23,6 +23,10 @@ phone required**, it just uses the existing pairing.
 - **No phone app** — detection is done entirely on the computer from the
   phone's Bluetooth advertisements. Works whether or not the phone holds an
   active connection (an iPhone usually doesn't).
+- **Multiple trusted devices** — track a phone *and* a watch; you're "present"
+  if any one of them is in range. One scan covers them all.
+- **Snooze** — pause proximity for 30 min / 1 h / 2 h from the panel (or the
+  `snooze` IPC verb) when you're leaving your phone across the room.
 - **Scan-verified signal** — each check runs a short (~4 s) BLE discovery
   window and trusts *only* a signal heard live during it. BlueZ keeps a
   bonded device's last RSSI forever after it goes silent (a modern iPhone
@@ -94,7 +98,8 @@ entry (under `bar.layout.<section>`) if you'd rather edit by hand.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `rssiThreshold` | `-78` | Signal (dBm) at/above which the phone counts as in range. Higher = must be closer. Set by the presets or Calibrate. |
+| `devices` | `[]` | Trusted devices as `[{mac, name}, …]` — present if any is near. Managed by the picker; falls back to the legacy single `targetMac` / `targetName`. |
+| `rssiThreshold` | `-78` | Signal (dBm) at/above which a device counts as in range. Higher = must be closer. Set by the presets or Calibrate. |
 | `pollIntervalSeconds` | `10` | Seconds between checks. Minimum 8; lower reacts faster but holds the radio more. |
 | `awayGraceCount` | `3` | Consecutive missed checks before starting the lock countdown (absorbs pocket dropouts). |
 | `immediateLock` | `true` | Lock on departure vs. just re-arming the idle timer. |

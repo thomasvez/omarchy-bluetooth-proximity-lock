@@ -70,7 +70,8 @@ test('rssiToPercent clamps to 0..100 and is monotonic', () => {
 test('tooltipMessage covers each state', () => {
   const M = loadModel()
   assert.match(M.tooltipMessage(false, 'iPhone'), /Paused/)
-  assert.match(M.tooltipMessage(true, ''), /No phone paired/)
+  assert.match(M.tooltipMessage(true, ''), /No device selected/)
+  assert.match(M.tooltipMessage(true, 'iPhone', false, null, false, 0, 3, false, 42), /Snoozed[\s\S]*42 min/)
   assert.match(M.tooltipMessage(true, 'iPhone', false, null, false, 0, 3, true), /not found in Bluetooth/)
   assert.match(M.tooltipMessage(true, 'iPhone', true, -44, false, 0, 3, false), /Nearby.*-44 dBm/s)
   assert.match(M.tooltipMessage(true, 'iPhone', false, -85, true, 2, 3, false), /weak signal.*2\/3/s)

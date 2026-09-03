@@ -19,8 +19,9 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "targetMac": "AA:BB:CC:11:22:33",
-      "targetName": "My Phone",
+      "devices": [],
+      "targetMac": "",
+      "targetName": "",
       "rssiThreshold": -78,
       "pollIntervalSeconds": 10,
       "awayGraceCount": 3,

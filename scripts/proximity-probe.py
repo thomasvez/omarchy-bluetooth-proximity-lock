@@ -120,6 +120,30 @@ def get_device_info_ctl(mac):
 
 MAC_RE = re.compile(r"[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\Z")
 
+SNOOZE_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp",
+                          "omarchy-proximity-snooze")
+
+
+def snooze_until():
+    """Epoch seconds the snooze runs until, or 0.0 if not (or no longer) snoozed."""
+    try:
+        with open(SNOOZE_PATH) as fh:
+            until = float(fh.read().strip())
+    except (OSError, ValueError):
+        return 0.0
+    return until if until > time.time() else 0.0
+
+
+def set_snooze(minutes):
+    if minutes <= 0:
+        with contextlib.suppress(OSError):
+            os.remove(SNOOZE_PATH)
+        return 0.0
+    until = time.time() + minutes * 60
+    with open(SNOOZE_PATH, "w") as fh:
+        fh.write(str(until))
+    return until
+
 
 def scan_samples(mac, window):
     """Every RSSI value heard for `mac` during an active discovery window, in
@@ -149,6 +173,23 @@ def scan_for_rssi(mac, window):
     return (samples[-1], True) if samples else (None, False)
 
 
+def scan_samples_multi(macs, window):
+    """One discovery window, RSSI samples per mac — so N target devices cost
+    one scan, not N."""
+    _, out, _ = run_command(["bluetoothctl", "--timeout", str(window), "scan", "on"],
+                            timeout=window + 5)
+    result = {m: [] for m in macs}
+    for line in out.splitlines():
+        if "RSSI" not in line:
+            continue
+        for m in macs:
+            if m in line:
+                mm = re.search(r"RSSI(?:[:=]|\s+is)?\s*(?:0x[0-9a-fA-F]+\s*)?\(?(-?\d+)\)?", line)
+                if mm:
+                    result[m].append(int(mm.group(1)))
+    return result
+
+
 def calibrate(mac, window=8, margin=20):
     """Sample the device where the user is sitting and suggest a threshold:
     the median observed signal, minus a margin so normal fidgeting doesn't
@@ -173,60 +214,82 @@ def calibrate(mac, window=8, margin=20):
     }
 
 
-def probe_device(mac, threshold=-78, scan_window=0):
-    if not mac or mac.strip() == "":
-        return {"status": "no_device", "mac": "", "near": False, "connected": False, "rssi": None}
+def _device_status(mac, threshold, scanned):
+    """One device's state. `scanned` is its list of live RSSI samples when a
+    scan ran, or None when the caller skipped the scan.
 
-    mac = mac.strip()
-    # Only ever hand a well-formed address to bluetoothctl / gdbus. Every call
-    # site uses argv (no shell), so this is defence-in-depth, not the only
-    # guard — but it keeps a hand-edited or malformed targetMac from producing
-    # confusing failures or odd D-Bus object paths.
-    if not MAC_RE.match(mac):
-        return {"status": "not_found", "mac": mac, "near": False, "connected": False, "rssi": None}
+    Near == an active connection (proof of proximity on its own), or a fresh
+    signal at/above the threshold. A disconnected device a scan couldn't hear
+    is away even if BlueZ still reports a stale RSSI for it.
+    """
     info = get_device_info_dbus(mac) or get_device_info_ctl(mac)
     if not info:
-        return {"status": "not_found", "mac": mac, "near": False, "connected": False, "rssi": None}
-
-    is_connected = info["connected"]
-    heard = None  # None = didn't scan; True/False = scan ran and (didn't) hear it
-
-    if is_connected:
-        # An active connection is proof of proximity on its own.
+        return {"mac": mac, "status": "not_found", "name": mac,
+                "connected": False, "rssi": None, "near": False}
+    connected = info["connected"]
+    if connected:
         rssi = info.get("rssi")
-    elif scan_window > 0:
-        # Not connected: the only trustworthy signal is one measured live in an
-        # active scan window (see scan_for_rssi). A cached property is ignored.
-        rssi, heard = scan_for_rssi(mac, scan_window)
-        after = get_device_info_dbus(mac) or get_device_info_ctl(mac)
-        if after:
-            is_connected = after["connected"]
-            info["name"] = after.get("name", info["name"])
-            if is_connected and rssi is None:
-                rssi = after.get("rssi")
+        near = (rssi is None) or (rssi >= threshold)
+    elif scanned is not None:
+        rssi = scanned[-1] if scanned else None
+        near = rssi is not None and rssi >= threshold
     else:
-        # Scanning disabled by the caller: best-effort cached value.
         rssi = info.get("rssi")
+        near = rssi is not None and rssi >= threshold
+    return {"mac": mac, "status": "ok", "name": info.get("name", mac),
+            "connected": connected, "rssi": rssi, "near": near}
 
-    # Near == active connection, or a fresh signal at/above the threshold. A
-    # disconnected phone that a scan couldn't hear is treated as away even if
-    # BlueZ still reports a stale RSSI for it.
-    if is_connected:
-        is_near = (rssi is None) or (rssi >= threshold)
-    elif heard is False:
-        is_near = False
-    else:
-        is_near = (rssi is not None and rssi >= threshold)
+
+def probe_devices(macs, threshold=-78, scan_window=0):
+    """Presence across one or more trusted devices — near if ANY of them is."""
+    sn = snooze_until()
+    if sn:
+        return {"status": "snoozed", "until": sn, "mac": "", "name": "",
+                "near": True, "connected": False, "rssi": None,
+                "threshold": threshold, "devices": []}
+
+    raw = [str(m).strip() for m in macs if m and str(m).strip()]
+    # Only ever hand a well-formed address to bluetoothctl / gdbus.
+    valid = [m for m in raw if MAC_RE.match(m)]
+    if not valid:
+        status = "not_found" if raw else "no_device"
+        return {"status": status, "mac": (raw[0] if raw else ""), "name": "",
+                "near": False, "connected": False, "rssi": None,
+                "threshold": threshold, "devices": []}
+
+    pre = {m: (get_device_info_dbus(m) or get_device_info_ctl(m)) for m in valid}
+    any_connected = any(i and i["connected"] for i in pre.values())
+    samples = None
+    if scan_window > 0 and not any_connected:
+        samples = scan_samples_multi(valid, scan_window)
+
+    devices = [_device_status(m, threshold, samples[m] if samples else None) for m in valid]
+
+    if all(d["status"] == "not_found" for d in devices):
+        return {"status": "not_found", "mac": valid[0], "name": valid[0],
+                "near": False, "connected": False, "rssi": None,
+                "threshold": threshold, "devices": devices}
+
+    def sig(d):
+        return d["rssi"] if d["rssi"] is not None else -999
+
+    near_devs = [d for d in devices if d["near"]]
+    primary = max(near_devs, key=sig) if near_devs else max(devices, key=sig)
 
     return {
         "status": "ok",
-        "mac": mac,
-        "name": info.get("name", mac),
-        "connected": is_connected,
-        "rssi": rssi,
+        "mac": primary["mac"],
+        "name": primary["name"],
+        "near": bool(near_devs),
+        "connected": any(d["connected"] for d in devices),
+        "rssi": primary["rssi"],
         "threshold": threshold,
-        "near": is_near
+        "devices": devices,
     }
+
+
+def probe_device(mac, threshold=-78, scan_window=0):
+    return probe_devices([mac] if mac else [], threshold=threshold, scan_window=scan_window)
 
 def set_omarchy_stay_awake(enabled=True):
     home = os.path.expanduser("~")
@@ -251,8 +314,11 @@ def lock_omarchy():
 def main():
     parser = argparse.ArgumentParser(description="Omarchy Proximity Helper")
     parser.add_argument("--list-devices", action="store_true", help="List paired Bluetooth devices")
-    parser.add_argument("--probe", type=str, help="Probe MAC address for proximity")
+    parser.add_argument("--probe", type=str,
+                        help="Probe one or more comma-separated MAC addresses for proximity")
     parser.add_argument("--calibrate", type=str, help="Sample a device's signal and suggest a threshold")
+    parser.add_argument("--snooze", type=int, metavar="MINUTES",
+                        help="Pause proximity for N minutes (0 = resume now)")
     parser.add_argument("--threshold", type=int, default=-78, help="RSSI threshold in dBm")
     parser.add_argument("--window", type=int, default=8, help="Seconds for --calibrate to sample")
     parser.add_argument("--scan-window", type=int, default=0,
@@ -270,8 +336,11 @@ def main():
         print(json.dumps(devices))
     elif args.calibrate:
         print(json.dumps(calibrate(args.calibrate, window=args.window)))
+    elif args.snooze is not None:
+        print(json.dumps({"until": set_snooze(args.snooze)}))
     elif args.probe:
-        res = probe_device(args.probe, threshold=args.threshold, scan_window=args.scan_window)
+        res = probe_devices(args.probe.split(","), threshold=args.threshold,
+                            scan_window=args.scan_window)
         res["ts"] = time.time()
         payload = json.dumps(res)
         print(payload)

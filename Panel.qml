@@ -29,6 +29,33 @@ Panel {
   // Settings
   readonly property string targetMac: Model.plainText(setting("targetMac", ""))
   readonly property string targetName: Model.plainText(setting("targetName", ""))
+
+  // One or more trusted devices — present if ANY is in range. Stored as a
+  // `devices` array; falls back to the legacy single targetMac/targetName.
+  readonly property var targetDevices: {
+    var list = setting("devices", null)
+    if (Array.isArray(list) && list.length)
+      return list.filter(function (d) { return d && d.mac })
+                 .map(function (d) { return { mac: Model.plainText(d.mac), name: Model.plainText(d.name || d.mac) } })
+    if (root.targetMac) return [{ mac: root.targetMac, name: root.targetName || root.targetMac }]
+    return []
+  }
+  readonly property var targetMacs: root.targetDevices.map(function (d) { return d.mac })
+  readonly property bool hasTarget: root.targetDevices.length > 0
+  function isTargetDevice(mac) { return root.targetMacs.indexOf(mac) !== -1 }
+  function liveStateFor(mac) {
+    for (var i = 0; i < root.deviceStates.length; i++)
+      if (root.deviceStates[i].mac === mac) return root.deviceStates[i]
+    return null
+  }
+
+  // What to call the target in the bar / hero.
+  readonly property string displayName: {
+    if (!root.hasTarget) return "Proximity Lock"
+    if (root.targetDevices.length === 1) return root.targetDevices[0].name
+    var base = (root.isNear && root.nearestName) ? root.nearestName : root.targetDevices[0].name
+    return base + " +" + (root.targetDevices.length - 1)
+  }
   readonly property int rssiThreshold: parseInt(setting("rssiThreshold", -78), 10) || -78
   // Seconds of BLE discovery per poll, used to refresh the phone's RSSI when
   // it isn't holding an active connection (the usual case for a phone). The
@@ -56,6 +83,12 @@ Panel {
   property var currentRssi: null
   property int missedChecks: 0
   property bool isFirstCheck: true
+  property var deviceStates: []        // per-device {mac,name,connected,rssi,near}
+  property string nearestName: ""      // name of the device driving "in range"
+  property bool isSnoozed: false
+  property double snoozedUntilMs: 0
+  readonly property int snoozeMinutesLeft: root.isSnoozed
+    ? Math.max(1, Math.ceil((root.snoozedUntilMs - snoozeClock.now) / 60000)) : 0
   // The configured device isn't known to Bluetooth at all (unpaired / removed
   // / adapter off). That's a configuration problem, not a "walked away" event,
   // so it must not drive the auto-lock.
@@ -71,7 +104,7 @@ Panel {
   // currently-selected device is always kept visible even if it'd be filtered.
   readonly property var visibleDevices: root.showAllDevices ? root.pairedDevices
     : root.pairedDevices.filter(function (d) {
-        return Model.isProximityToken(d.icon) || d.mac === root.targetMac
+        return Model.isProximityToken(d.icon) || root.isTargetDevice(d.mac)
       })
   readonly property int hiddenDeviceCount: root.pairedDevices.length - root.visibleDevices.length
 
@@ -111,7 +144,7 @@ Panel {
   }
 
   function triggerProximityCheck() {
-    if (!root.pluginEnabled || !root.targetMac) return
+    if (!root.pluginEnabled || !root.hasTarget) return
     // Only the lease holder probes — otherwise every monitor's copy would
     // poll, notify and lock independently. claimPollLease() also renews it.
     if (!Model.claimPollLease(root.instanceId, Date.now())) return
@@ -120,7 +153,7 @@ Panel {
     probeProcess.command = [
       "python3",
       Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
-      "--probe", root.targetMac,
+      "--probe", root.targetMacs.join(","),
       "--threshold", String(root.rssiThreshold),
       "--scan-window", String(root.scanWindowSeconds),
       "--state-file", root.stateFilePath
@@ -265,6 +298,20 @@ Panel {
   function handleProbeResult(data) {
     if (!root.pluginEnabled) return
 
+    // Snoozed: hold everything, keep the screen awake, show the countdown.
+    if (data.status === "snoozed") {
+      pendingLockTimer.stop()
+      root.lockCountdown = 0
+      root.isSnoozed = true
+      root.snoozedUntilMs = (data.until || 0) * 1000
+      root.deviceMissing = false
+      return
+    }
+    root.isSnoozed = false
+    root.snoozedUntilMs = 0
+
+    root.deviceStates = Array.isArray(data.devices) ? data.devices : []
+
     // Device unknown to BlueZ (unpaired, removed, adapter powered off). Surface
     // it, drop any stay-awake hold we had for it, but never lock — the user
     // didn't walk away, they changed a Bluetooth setting.
@@ -288,6 +335,7 @@ Panel {
 
     root.isConnected = connected
     root.currentRssi = rssi
+    root.nearestName = Model.plainText(data.name || "")
 
     if (data.status === "ok" && data.near === true) {
       root.missedChecks = 0
@@ -325,15 +373,72 @@ Panel {
 
   // Measure the phone where the user is sitting and set the threshold from it.
   function calibrate() {
-    if (!root.targetMac || root.calibrating) return
+    if (!root.hasTarget || root.calibrating) return
     root.calibrating = true
     calibrateProcess.command = [
       "python3",
       Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
-      "--calibrate", root.targetMac,
+      "--calibrate", root.targetMacs[0],
       "--window", String(root.calibrateSeconds)
     ]
     calibrateProcess.running = true
+  }
+
+  // Pause proximity for N minutes (0 = resume). Shared via a runtime file the
+  // probe checks, so every widget copy and a fresh shell all see it.
+  function snooze(minutes) {
+    // Optimistic local update for instant feedback on the clicked copy.
+    if (minutes > 0) { root.isSnoozed = true; root.snoozedUntilMs = Date.now() + minutes * 60000 }
+    else { root.isSnoozed = false; root.snoozedUntilMs = 0 }
+    snoozeProcess.command = [
+      "python3",
+      Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
+      "--snooze", String(minutes)
+    ]
+    snoozeProcess.running = true
+  }
+
+  Process {
+    id: snoozeProcess
+    // Once the snooze file is written, refresh the shared state file straight
+    // away (no scan) so the other monitors' widgets update now, not next poll.
+    onExited: root.forceStateRefresh()
+  }
+
+  // A one-off probe purely to rewrite stateFilePath now (e.g. right after a
+  // snooze toggle) so the other monitors' widgets update immediately rather
+  // than next poll. Not lease-gated: it only touches the file everyone reads.
+  // While snoozed the probe returns "snoozed" before scanning, so that path is
+  // instant; on resume it does a real scan for an accurate reading.
+  Process { id: nudgeProcess }
+  function forceStateRefresh() {
+    if (!root.hasTarget || probeProcess.running) return
+    nudgeProcess.command = [
+      "python3",
+      Qt.resolvedUrl("scripts/proximity-probe.py").toString().replace("file://", ""),
+      "--probe", root.targetMacs.join(","),
+      "--threshold", String(root.rssiThreshold),
+      "--scan-window", String(root.scanWindowSeconds),
+      "--state-file", root.stateFilePath
+    ]
+    nudgeProcess.running = true
+  }
+
+  Timer {
+    id: snoozeClock
+    property double now: Date.now()
+    interval: 20000
+    repeat: true
+    running: root.isSnoozed
+    triggeredOnStart: true
+    onTriggered: {
+      now = Date.now()
+      if (root.snoozedUntilMs > 0 && now >= root.snoozedUntilMs) {
+        root.isSnoozed = false
+        root.snoozedUntilMs = 0
+        Qt.callLater(root.triggerProximityCheck)
+      }
+    }
   }
 
   function applyCalibration(data) {
@@ -356,12 +461,21 @@ Panel {
     root.bar.shell.updateEntryInline(root.moduleName, next)
   }
 
-  function selectDevice(mac, name) {
+  // Toggle a device in/out of the trusted list.
+  function toggleTargetDevice(mac, name) {
     if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
+    var list = root.targetDevices.slice()
+    var i = -1
+    for (var j = 0; j < list.length; j++) if (list[j].mac === mac) { i = j; break }
+    if (i >= 0) list.splice(i, 1)
+    else list.push({ mac: mac, name: name })
+
     var next = {}
     for (var k in root.settings) next[k] = root.settings[k]
-    next.targetMac = mac
-    next.targetName = name
+    next.devices = list
+    // Keep the legacy single-device keys pointed at the first entry.
+    next.targetMac = list.length ? list[0].mac : ""
+    next.targetName = list.length ? list[0].name : ""
     root.bar.shell.updateEntryInline(root.moduleName, next)
     Qt.callLater(root.triggerProximityCheck)
   }
@@ -382,7 +496,7 @@ Panel {
 
   Timer {
     interval: root.pollIntervalSeconds * 1000
-    running: root.pluginEnabled && root.targetMac !== ""
+    running: root.pluginEnabled && root.hasTarget
     repeat: true
     triggeredOnStart: true
     onTriggered: root.triggerProximityCheck()
@@ -621,20 +735,25 @@ Panel {
 
           PanelHero {
             width: parent.width
-            title: root.targetName ? root.targetName : (root.targetMac ? root.targetMac : "Proximity Lock")
+            title: root.displayName
             meta: !root.pluginEnabled ? "Proximity tracking paused"
+                  : root.isSnoozed ? ("Snoozed • " + root.snoozeMinutesLeft + " min left")
                   : root.deviceMissing ? "Not found in Bluetooth • tracking paused"
-                  : root.isNear ? "Phone in range • screen kept awake"
-                  : pendingLockTimer.running ? ("Phone away • locking in " + root.lockCountdown + " s")
-                  : "Phone away • waiting for it to return"
+                  : root.isNear ? "In range • screen kept awake"
+                  : pendingLockTimer.running ? ("Away • locking in " + root.lockCountdown + " s")
+                  : "Away • waiting for it to return"
             foreground: root.foreground
             fontFamily: root.fontFamily
-            iconOpacity: (root.isNear && !root.deviceMissing) ? 1.0 : 0.6
+            iconOpacity: (root.isNear && !root.deviceMissing && !root.isSnoozed) ? 1.0 : 0.6
             iconComponent: Component {
               Text {
                 textFormat: Text.PlainText
-                text: !root.pluginEnabled ? "󰦝" : root.deviceMissing ? "󰦉" : (root.isNear ? "󰄜" : "󰦞")
-                color: (!root.pluginEnabled || root.deviceMissing) ? root.dim : (root.isNear ? root.positive : root.negative)
+                text: !root.pluginEnabled ? "󰦝"
+                      : root.isSnoozed ? "󰒲"
+                      : root.deviceMissing ? "󰦉"
+                      : (root.isNear ? "󰄜" : "󰦞")
+                color: (!root.pluginEnabled || root.deviceMissing || root.isSnoozed) ? root.dim
+                       : (root.isNear ? root.positive : root.negative)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.displayLarge
               }
@@ -670,11 +789,59 @@ Panel {
             }
           }
 
+          // 1c. Snooze
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.hasTarget
+
+            PanelSectionHeader {
+              text: root.isSnoozed ? "SNOOZED" : "SNOOZE"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.isSnoozed
+                  ? [{ label: root.snoozeMinutesLeft + " min left — resume now", val: 0, wide: true }]
+                  : [{ label: "30 min", val: 30 }, { label: "1 hour", val: 60 }, { label: "2 hours", val: 120 }]
+                delegate: Rectangle {
+                  width: modelData.wide ? parent.width : (parent.width - Style.space(12)) / 3
+                  height: Style.space(28)
+                  radius: Style.space(4)
+                  color: snzMouse.containsMouse ? root.hoverFill : root.trackFill
+                  border.width: 1
+                  border.color: root.hairline
+
+                  MouseArea {
+                    id: snzMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.snooze(modelData.val)
+                  }
+                  Text {
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: modelData.label
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    color: root.foreground
+                  }
+                }
+              }
+            }
+          }
+
           // 2. Proximity Signal Meter
           Column {
             width: parent.width
             spacing: Style.space(8)
-            visible: root.targetMac !== "" && !root.deviceMissing
+            visible: root.hasTarget && !root.deviceMissing
 
             PanelSectionHeader {
               text: "SIGNAL STRENGTH"
@@ -728,7 +895,7 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.space(6)
-            visible: root.targetMac !== ""
+            visible: root.hasTarget
 
             Item {
               width: parent.width
@@ -859,7 +1026,9 @@ Panel {
 
               PanelSectionHeader {
                 id: secHead
-                text: "PAIRED BLUETOOTH DEVICES"
+                text: root.targetDevices.length > 1
+                      ? ("TRUSTED DEVICES · " + root.targetDevices.length)
+                      : "TRUSTED DEVICE"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
               }
@@ -888,8 +1057,8 @@ Panel {
                 width: column.width
                 height: Style.space(34)
                 radius: Style.space(5)
-                color: (root.targetMac === modelData.mac) ? root.selectedFill : (devMouse.containsMouse ? root.hoverFill : root.trackFill)
-                border.color: (root.targetMac === modelData.mac) ? root.hairline : "transparent"
+                color: root.isTargetDevice(modelData.mac) ? root.selectedFill : (devMouse.containsMouse ? root.hoverFill : root.trackFill)
+                border.color: root.isTargetDevice(modelData.mac) ? root.hairline : "transparent"
                 border.width: 1
 
                 MouseArea {
@@ -897,7 +1066,7 @@ Panel {
                   anchors.fill: parent
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.selectDevice(modelData.mac, modelData.name)
+                  onClicked: root.toggleTargetDevice(modelData.mac, modelData.name)
                 }
 
                 Row {
@@ -913,7 +1082,7 @@ Panel {
                     text: Model.deviceGlyph(modelData.icon)
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.body
-                    color: (root.targetMac === modelData.mac) ? root.foreground : root.dim
+                    color: root.isTargetDevice(modelData.mac) ? root.foreground : root.dim
                   }
 
                   Text {
@@ -928,15 +1097,21 @@ Panel {
 
                 Text {
                   id: statusTxt
+                  readonly property bool tracked: root.isTargetDevice(modelData.mac)
+                  readonly property var live: root.liveStateFor(modelData.mac)
                   textFormat: Text.PlainText
                   anchors.right: parent.right
                   anchors.rightMargin: Style.space(8)
                   anchors.verticalCenter: parent.verticalCenter
-                  text: (root.targetMac === modelData.mac) ? "✓ Selected" : (modelData.connected ? "Connected" : "Paired")
+                  text: !tracked ? (modelData.connected ? "Connected" : "Paired")
+                        : live && live.near ? "✓ in range"
+                        : live ? "✓ tracked · away"
+                        : "✓ tracked"
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
-                  font.bold: root.targetMac === modelData.mac
-                  color: (root.targetMac === modelData.mac) ? root.positive : (modelData.connected ? root.positive : root.dim)
+                  font.bold: tracked
+                  color: !tracked ? (modelData.connected ? root.positive : root.dim)
+                         : (live && live.near) ? root.positive : root.dim
                 }
               }
             }
@@ -965,7 +1140,7 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.space(10)
-            visible: root.targetMac !== "" && !root.deviceMissing
+            visible: root.hasTarget && !root.deviceMissing
 
             PanelSectionHeader {
               text: "TIMING"
@@ -1037,7 +1212,7 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.space(6)
-            visible: root.targetMac !== ""
+            visible: root.hasTarget
 
             PanelSectionHeader {
               text: "RUN A COMMAND"

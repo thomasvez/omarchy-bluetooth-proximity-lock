@@ -47,9 +47,11 @@ BarWidget {
   readonly property bool isConnected: panelLoader.item ? panelLoader.item.isConnected : false
   readonly property var currentRssi: panelLoader.item ? panelLoader.item.currentRssi : null
   readonly property bool pluginEnabled: panelLoader.item ? panelLoader.item.pluginEnabled : true
-  readonly property string targetMac: panelLoader.item ? panelLoader.item.targetMac : ""
-  readonly property string targetName: panelLoader.item ? panelLoader.item.targetName : ""
+  readonly property bool hasTarget: panelLoader.item ? panelLoader.item.hasTarget : false
+  readonly property string targetName: panelLoader.item ? panelLoader.item.displayName : ""
   readonly property bool deviceMissing: panelLoader.item ? panelLoader.item.deviceMissing : false
+  readonly property bool isSnoozed: panelLoader.item ? panelLoader.item.isSnoozed : false
+  readonly property int snoozeMinutesLeft: panelLoader.item ? panelLoader.item.snoozeMinutesLeft : 0
   readonly property int missedChecks: panelLoader.item ? panelLoader.item.missedChecks : 0
   readonly property int awayGraceCount: panelLoader.item ? panelLoader.item.awayGraceCount : 3
 
@@ -86,14 +88,18 @@ BarWidget {
     function keepUnlocked(): void {
       if (panelLoader.item && panelLoader.item.keepUnlocked) panelLoader.item.keepUnlocked()
     }
+    function snooze(minutes: int): void {
+      if (panelLoader.item && panelLoader.item.snooze) panelLoader.item.snooze(minutes)
+    }
     function status(): string {
       return JSON.stringify({
         enabled: root.pluginEnabled,
-        targetMac: root.targetMac,
-        targetName: root.targetName,
+        target: root.targetName,
         near: root.isNear,
         connected: root.isConnected,
         rssi: root.currentRssi,
+        snoozed: root.isSnoozed,
+        snoozeMinutesLeft: root.snoozeMinutesLeft,
         lockCountdown: panelLoader.item ? panelLoader.item.lockCountdown : 0
       })
     }
@@ -107,27 +113,30 @@ BarWidget {
     // Single Nerd Font glyph (MDI cellphone family) so the widget reads as
     // one bar icon; state is carried by colour plus the lock/off variants.
     text: {
-      if (!root.pluginEnabled) return "󰦝"                 // cellphone-off — paused
-      if (!root.targetMac || root.deviceMissing) return "󰦉" // cellphone-remove — no/unknown device
-      if (root.isNear) return "󰄜"                          // cellphone — in range
-      return "󰦞"                                           // cellphone-lock — away / locked
+      if (!root.pluginEnabled) return "󰦝"                  // cellphone-off — paused
+      if (root.isSnoozed) return "󰒲"                        // sleep — snoozed
+      if (!root.hasTarget || root.deviceMissing) return "󰦉"  // cellphone-remove — no/unknown device
+      if (root.isNear) return "󰄜"                           // cellphone — in range
+      return "󰦞"                                            // cellphone-lock — away / locked
     }
 
     foreground: {
-      if (!root.pluginEnabled || !root.targetMac || root.deviceMissing) return root.bar ? root.bar.barForeground : Color.foreground
+      if (!root.pluginEnabled || !root.hasTarget || root.deviceMissing || root.isSnoozed)
+        return root.bar ? root.bar.barForeground : Color.foreground
       if (root.isNear) return Qt.color("#2ecc71")
       return Qt.color("#e74c3c")
     }
 
     tooltipText: Model.tooltipMessage(
       root.pluginEnabled,
-      root.targetName || root.targetMac,
+      root.targetName,
       root.isNear,
       root.currentRssi,
       root.isConnected,
       root.missedChecks,
       root.awayGraceCount,
-      root.deviceMissing
+      root.deviceMissing,
+      root.isSnoozed ? root.snoozeMinutesLeft : 0
     )
 
     onPressed: function(b) {

@@ -192,3 +192,75 @@ def test_list_paired_devices_unreadable_info_defaults_icon(bt):
     # no bt.info[MAC] -> `bluetoothctl info` fails
     devs = probe.list_paired_devices()
     assert devs[0]["icon"] == "unknown"
+
+
+# --- multiple trusted devices -----------------------------------------------
+
+WATCH = "AA:BB:CC:00:11:22"
+
+
+def test_near_if_any_device_is_near(bt):
+    bt.dbus[MAC] = dbus_props(connected=False)     # phone: away
+    bt.dbus[WATCH] = dbus_props(connected=True)    # watch: connected -> near
+    r = probe.probe_devices([MAC, WATCH], threshold=-78, scan_window=4)
+    assert r["near"] is True
+    assert r["mac"] == WATCH                       # the near one is primary
+    assert {d["mac"]: d["near"] for d in r["devices"]} == {MAC: False, WATCH: True}
+
+
+def test_away_only_if_all_devices_away(bt):
+    bt.dbus[MAC] = dbus_props(connected=False)
+    bt.dbus[WATCH] = dbus_props(connected=False)
+    bt.scan = chg_line("11:11:11:11:11:11", -50)   # neither target heard
+    r = probe.probe_devices([MAC, WATCH], threshold=-78, scan_window=4)
+    assert r["near"] is False
+
+
+def test_primary_is_the_strongest_near_device(bt):
+    bt.dbus[MAC] = dbus_props(connected=False)
+    bt.dbus[WATCH] = dbus_props(connected=False)
+    bt.scan = "\n".join([chg_line(MAC, -70), chg_line(WATCH, -40)])
+    r = probe.probe_devices([MAC, WATCH], threshold=-78, scan_window=4)
+    assert r["near"] is True and r["mac"] == WATCH and r["rssi"] == -40
+
+
+def test_all_devices_unknown_is_not_found(bt):
+    r = probe.probe_devices([MAC, WATCH], scan_window=4)
+    assert r["status"] == "not_found" and r["near"] is False
+
+
+def test_probe_string_is_comma_split(bt, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(probe, "probe_devices",
+                        lambda macs, **kw: seen.setdefault("macs", macs) or {"status": "ok"})
+    probe.probe_device(MAC)  # single still works
+    assert seen["macs"] == [MAC]
+
+
+# --- snooze ----------------------------------------------------------------
+
+@pytest.fixture
+def snooze_path(tmp_path, monkeypatch):
+    p = tmp_path / "snooze"
+    monkeypatch.setattr(probe, "SNOOZE_PATH", str(p))
+    return p
+
+
+def test_snooze_round_trip(snooze_path):
+    assert probe.snooze_until() == 0.0
+    until = probe.set_snooze(30)
+    assert until > 0 and probe.snooze_until() == until
+    probe.set_snooze(0)
+    assert probe.snooze_until() == 0.0 and not snooze_path.exists()
+
+
+def test_expired_snooze_reads_as_inactive(snooze_path):
+    snooze_path.write_text("1")  # epoch 1970
+    assert probe.snooze_until() == 0.0
+
+
+def test_probe_is_short_circuited_while_snoozed(bt, snooze_path):
+    probe.set_snooze(15)
+    r = probe.probe_devices([MAC], scan_window=4)
+    assert r["status"] == "snoozed" and r["near"] is True
+    assert not any("scan" in c for c in bt.calls)  # never touched the radio
