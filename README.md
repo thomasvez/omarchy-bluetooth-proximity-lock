@@ -39,8 +39,9 @@ phone required**, it just uses the existing pairing.
   right-click locks now.
 - **Everything in the panel** — device picker (phones / watches; desk
   accessories behind "show all"), live signal meter, Close / Medium / Far
-  presets *or* **Calibrate**, sliders for lock delay / check interval /
-  dropout tolerance, and toggles for immediate-lock, notifications and pause.
+  presets *or* **Calibrate**, steppers for lock delay / check interval /
+  dropout tolerance, toggles for immediate-lock / notifications / pause, and
+  the two command-hook fields.
 
 ## How it behaves
 
@@ -88,8 +89,8 @@ paired-devices list.
 
 ## Configuration
 
-Everything below is set from the panel except the two command hooks, which are
-`shell.json`-only for now (the widget's entry under `bar.layout.<section>`).
+All of these are set from the panel. They live in the widget's `shell.json`
+entry (under `bar.layout.<section>`) if you'd rather edit by hand.
 
 | Key | Default | Meaning |
 | --- | --- | --- |

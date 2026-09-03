@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -590,11 +589,14 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(520))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(760))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      // While a command field is being edited it owns the keyboard (typing,
+      // Esc/Enter handled by the field itself).
+      blocked: awayCmdField.activeFocus || returnCmdField.activeFocus
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -987,7 +989,6 @@ Panel {
 
             StepperRow {
               label: "Dropout tolerance"
-              unit: " checks"
               from: 1; to: 6; stepSize: 1
               value: root.awayGraceCount
               hint: "Consecutive missed checks before the lock countdown starts — absorbs brief signal dips."
@@ -1026,19 +1027,56 @@ Panel {
               onText: "Active"; offText: "Paused"
               onToggled: root.updateSetting("enabled", !root.pluginEnabled)
             }
+          }
+
+          // 4c. Command hooks
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.targetMac !== ""
+
+            PanelSectionHeader {
+              text: "RUN A COMMAND"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
 
             Text {
-              textFormat: Text.PlainText
               width: parent.width
               wrapMode: Text.WordWrap
-              visible: root.onAwayCommand !== "" || root.onReturnCommand !== ""
-              text: "Command hooks set: "
-                    + (root.onAwayCommand !== "" ? "on-away" : "")
-                    + (root.onAwayCommand !== "" && root.onReturnCommand !== "" ? " + " : "")
-                    + (root.onReturnCommand !== "" ? "on-return" : "")
+              textFormat: Text.PlainText
+              text: "Shell commands run on the transitions, e.g. playerctl pause / playerctl play. Press Enter to save."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
+            }
+
+            TextField {
+              id: awayCmdField
+              width: parent.width
+              foreground: root.foreground
+              placeholderText: "when the phone leaves…"
+              text: root.onAwayCommand
+              onEditingFinished: {
+                if (text !== root.onAwayCommand) root.updateSetting("onAwayCommand", text)
+              }
+              Keys.onPressed: function (e) {
+                if (e.key === Qt.Key_Escape) { text = root.onAwayCommand; focus = false; e.accepted = true }
+              }
+            }
+
+            TextField {
+              id: returnCmdField
+              width: parent.width
+              foreground: root.foreground
+              placeholderText: "when the phone returns…"
+              text: root.onReturnCommand
+              onEditingFinished: {
+                if (text !== root.onReturnCommand) root.updateSetting("onReturnCommand", text)
+              }
+              Keys.onPressed: function (e) {
+                if (e.key === Qt.Key_Escape) { text = root.onReturnCommand; focus = false; e.accepted = true }
+              }
             }
           }
 
