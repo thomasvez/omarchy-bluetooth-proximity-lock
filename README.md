@@ -5,7 +5,7 @@ while you're nearby. A native **Omarchy 4 (Quattro)** bar widget that uses
 Bluetooth signal strength for phone-proximity detection — **no app on the
 phone required**, it just uses the existing pairing.
 
-![Bluetooth Proximity Lock](preview.png)
+![Bluetooth Proximity Lock](preview.png?v=2)
 
 ## Features
 
