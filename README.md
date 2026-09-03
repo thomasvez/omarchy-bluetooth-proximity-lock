@@ -37,10 +37,10 @@ phone required**, it just uses the existing pairing.
 - **Top-bar widget** — one glanceable phone glyph (green nearby, red away,
   dimmed when paused or the device is unpaired). Middle-click forces a check,
   right-click locks now.
-- **Settings panel** — 1-click device picker (phones / watches; desk
-  accessories hidden behind "show all"), live signal meter, Close / Medium /
-  Far range presets *or* **Calibrate** (samples the signal where you sit and
-  sets the threshold from it), immediate-lock toggle, pause switch.
+- **Everything in the panel** — device picker (phones / watches; desk
+  accessories behind "show all"), live signal meter, Close / Medium / Far
+  presets *or* **Calibrate**, sliders for lock delay / check interval /
+  dropout tolerance, and toggles for immediate-lock, notifications and pause.
 
 ## How it behaves
 
@@ -88,12 +88,13 @@ paired-devices list.
 
 ## Configuration
 
-Set from the panel, or in the widget's `shell.json` entry:
+Everything below is set from the panel except the two command hooks, which are
+`shell.json`-only for now (the widget's entry under `bar.layout.<section>`).
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `rssiThreshold` | `-78` | Signal (dBm) at/above which the phone counts as in range. Higher = must be closer. |
-| `pollIntervalSeconds` | `10` | Seconds between checks. Minimum 8; lower keeps the radio busier. |
+| `rssiThreshold` | `-78` | Signal (dBm) at/above which the phone counts as in range. Higher = must be closer. Set by the presets or Calibrate. |
+| `pollIntervalSeconds` | `10` | Seconds between checks. Minimum 8; lower reacts faster but holds the radio more. |
 | `awayGraceCount` | `3` | Consecutive missed checks before starting the lock countdown (absorbs pocket dropouts). |
 | `immediateLock` | `true` | Lock on departure vs. just re-arming the idle timer. |
 | `lockDelaySeconds` | `10` | Live countdown before locking, with a "Keep unlocked" button. `0` = lock at once. |

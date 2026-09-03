@@ -431,6 +431,156 @@ Panel {
     onExited: function() { root.calibrating = false }
   }
 
+  // --- Reusable settings rows -------------------------------------------------
+
+  component ToggleRow: Rectangle {
+    id: toggleRow
+    property string label: ""
+    property bool on: false
+    property string onText: "Enabled"
+    property string offText: "Disabled"
+    signal toggled()
+
+    width: parent ? parent.width : 0
+    height: Style.space(32)
+    radius: Style.space(4)
+    color: trMouse.containsMouse ? root.hoverFill : root.trackFill
+
+    MouseArea {
+      id: trMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: toggleRow.toggled()
+    }
+    Text {
+      textFormat: Text.PlainText
+      anchors { left: parent.left; leftMargin: Style.space(8); verticalCenter: parent.verticalCenter }
+      text: toggleRow.label
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+      color: root.foreground
+    }
+    Text {
+      textFormat: Text.PlainText
+      anchors { right: parent.right; rightMargin: Style.space(8); verticalCenter: parent.verticalCenter }
+      text: toggleRow.on ? toggleRow.onText : toggleRow.offText
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+      color: toggleRow.on ? root.positive : root.dim
+    }
+  }
+
+  // A − / + stepper. Steppers, not a slider: PanelSlider commits on every
+  // mouse-wheel tick, so a slider inside this scrollable panel changes its
+  // value whenever the cursor scrolls past it.
+  component StepButton: Rectangle {
+    property string glyph: ""
+    property bool active: true
+    signal tapped()
+    width: Style.space(28)
+    height: Style.space(28)
+    radius: Style.space(4)
+    color: !active ? "transparent"
+         : sbMouse.containsMouse ? root.hoverFill : root.trackFill
+    border.width: 1
+    border.color: active ? root.hairline : "transparent"
+    opacity: active ? 1.0 : 0.35
+    MouseArea {
+      id: sbMouse
+      anchors.fill: parent
+      enabled: parent.active
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: parent.tapped()
+    }
+    Text {
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: parent.glyph
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+      color: root.foreground
+    }
+  }
+
+  component StepperRow: Column {
+    id: stepper
+    property string label: ""
+    property string unit: ""
+    property int from: 0
+    property int to: 10
+    property int stepSize: 1
+    property int value: 0
+    property string hint: ""
+    signal committed(int v)
+
+    function bump(delta) {
+      var n = Math.max(stepper.from, Math.min(stepper.to, stepper.value + delta))
+      if (n !== stepper.value) stepper.committed(n)
+    }
+
+    width: parent ? parent.width : 0
+    spacing: Style.space(3)
+
+    Item {
+      width: parent.width
+      height: Style.space(28)
+
+      Text {
+        anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+        anchors.right: ctl.left
+        anchors.rightMargin: Style.space(8)
+        textFormat: Text.PlainText
+        text: stepper.label
+        elide: Text.ElideRight
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        color: root.foreground
+      }
+
+      Row {
+        id: ctl
+        anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+        spacing: Style.space(6)
+
+        StepButton {
+          glyph: "−"
+          active: stepper.value > stepper.from
+          onTapped: stepper.bump(-stepper.stepSize)
+        }
+        Text {
+          width: Style.space(58)
+          height: Style.space(28)
+          verticalAlignment: Text.AlignVCenter
+          horizontalAlignment: Text.AlignHCenter
+          textFormat: Text.PlainText
+          text: stepper.value + stepper.unit
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          font.bold: true
+          color: root.foreground
+        }
+        StepButton {
+          glyph: "+"
+          active: stepper.value < stepper.to
+          onTapped: stepper.bump(stepper.stepSize)
+        }
+      }
+    }
+    Text {
+      textFormat: Text.PlainText
+      visible: stepper.hint !== ""
+      width: parent.width
+      wrapMode: Text.WordWrap
+      text: stepper.hint
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      color: root.dim
+    }
+  }
+
   // --- Dropdown Panel Surface ---
   KeyboardPanel {
     id: panel
@@ -805,7 +955,47 @@ Panel {
             }
           }
 
-          // 4. Quick Toggles
+          // 4a. Timing
+          Column {
+            width: parent.width
+            spacing: Style.space(10)
+            visible: root.targetMac !== "" && !root.deviceMissing
+
+            PanelSectionHeader {
+              text: "TIMING"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            StepperRow {
+              label: "Lock delay"
+              unit: " s"
+              from: 0; to: 60; stepSize: 5
+              value: root.lockDelaySeconds
+              hint: "Countdown after the phone leaves, with a Keep-unlocked button. 0 locks at once."
+              onCommitted: function(v) { root.updateSetting("lockDelaySeconds", v) }
+            }
+
+            StepperRow {
+              label: "Check interval"
+              unit: " s"
+              from: 8; to: 30; stepSize: 2
+              value: root.pollIntervalSeconds
+              hint: "How often to scan for the phone. Lower reacts faster but holds the Bluetooth radio more."
+              onCommitted: function(v) { root.updateSetting("pollIntervalSeconds", v) }
+            }
+
+            StepperRow {
+              label: "Dropout tolerance"
+              unit: " checks"
+              from: 1; to: 6; stepSize: 1
+              value: root.awayGraceCount
+              hint: "Consecutive missed checks before the lock countdown starts — absorbs brief signal dips."
+              onCommitted: function(v) { root.updateSetting("awayGraceCount", v) }
+            }
+          }
+
+          // 4b. Options
           Column {
             width: parent.width
             spacing: Style.space(8)
@@ -816,80 +1006,39 @@ Panel {
               fontFamily: root.fontFamily
             }
 
-            Rectangle {
-              width: parent.width
-              height: Style.space(32)
-              radius: Style.space(4)
-              color: immLockMouse.containsMouse ? root.hoverFill : root.trackFill
-
-              MouseArea {
-                id: immLockMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.updateSetting("immediateLock", !root.immediateLock)
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(8)
-                anchors.verticalCenter: parent.verticalCenter
-                text: "Immediate lock when away"
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                color: root.foreground
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(8)
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.immediateLock ? "Enabled" : "Disabled"
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                color: root.immediateLock ? root.positive : root.dim
-              }
+            ToggleRow {
+              label: "Immediate lock when away"
+              on: root.immediateLock
+              onText: "On"; offText: "Idle timer"
+              onToggled: root.updateSetting("immediateLock", !root.immediateLock)
             }
 
-            Rectangle {
+            ToggleRow {
+              label: "Notifications & countdown"
+              on: root.notifyOnStateChange
+              onText: "On"; offText: "Off"
+              onToggled: root.updateSetting("notifyOnStateChange", !root.notifyOnStateChange)
+            }
+
+            ToggleRow {
+              label: "Proximity detection active"
+              on: root.pluginEnabled
+              onText: "Active"; offText: "Paused"
+              onToggled: root.updateSetting("enabled", !root.pluginEnabled)
+            }
+
+            Text {
+              textFormat: Text.PlainText
               width: parent.width
-              height: Style.space(32)
-              radius: Style.space(4)
-              color: enabledMouse.containsMouse ? root.hoverFill : root.trackFill
-
-              MouseArea {
-                id: enabledMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.updateSetting("enabled", !root.pluginEnabled)
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(8)
-                anchors.verticalCenter: parent.verticalCenter
-                text: "Proximity detection active"
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                color: root.foreground
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(8)
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.pluginEnabled ? "Active" : "Paused"
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                color: root.pluginEnabled ? root.positive : root.negative
-              }
+              wrapMode: Text.WordWrap
+              visible: root.onAwayCommand !== "" || root.onReturnCommand !== ""
+              text: "Command hooks set: "
+                    + (root.onAwayCommand !== "" ? "on-away" : "")
+                    + (root.onAwayCommand !== "" && root.onReturnCommand !== "" ? " + " : "")
+                    + (root.onReturnCommand !== "" ? "on-return" : "")
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
             }
           }
 
