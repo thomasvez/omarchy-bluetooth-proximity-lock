@@ -123,6 +123,8 @@ ruff check scripts/ tests/
 CI runs all of the above plus shellcheck, manifest validation, and a check
 that every `Qt.resolvedUrl()` in the QML resolves to a bundled file.
 
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
