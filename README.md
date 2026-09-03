@@ -9,9 +9,11 @@ phone required**, it just uses the existing pairing.
 
 ## Features
 
-- **Auto-lock on departure** — runs `omarchy-system-lock` the moment your
-  phone drops out of Bluetooth range (or turn Bluetooth off / power the phone
-  down). Optional: fall back to the normal idle timer instead of locking now.
+- **Auto-lock on departure** — runs `omarchy-system-lock` shortly after your
+  phone drops out of Bluetooth range (or you turn Bluetooth off / the phone
+  powers down). A short countdown first, with a **"Keep unlocked"** button on
+  the notification; set the delay to 0 to lock instantly, or turn immediate
+  lock off to just re-arm the normal idle timer.
 - **Keep-awake while present** — suppresses the screensaver / idle lock while
   your phone is at the desk, and releases it again when you leave.
 - **No phone app** — detection is done entirely on the computer from the
@@ -88,8 +90,9 @@ Set from the panel, or in the widget's `shell.json` entry:
 | --- | --- | --- |
 | `rssiThreshold` | `-78` | Signal (dBm) at/above which the phone counts as in range. Higher = must be closer. |
 | `pollIntervalSeconds` | `10` | Seconds between checks. Minimum 8; lower keeps the radio busier. |
-| `awayGraceCount` | `3` | Consecutive missed checks before locking (absorbs pocket dropouts). |
-| `immediateLock` | `true` | Lock immediately on departure vs. just re-arming the idle timer. |
+| `awayGraceCount` | `3` | Consecutive missed checks before starting the lock countdown (absorbs pocket dropouts). |
+| `immediateLock` | `true` | Lock on departure vs. just re-arming the idle timer. |
+| `lockDelaySeconds` | `10` | Countdown before locking, with a "Keep unlocked" notification button. `0` = lock at once. |
 | `notifyOnStateChange` | `true` | Desktop notification on in-range / away transitions. |
 
 ## Development

@@ -25,6 +25,7 @@
       "pollIntervalSeconds": 10,
       "awayGraceCount": 3,
       "immediateLock": true,
+      "lockDelaySeconds": 10,
       "notifyOnStateChange": true,
       "enabled": true
     },
@@ -68,8 +69,15 @@
         "key": "immediateLock",
         "type": "boolean",
         "label": "Immediate Lock When Away",
-        "description": "Instantly lock screen when you walk away, instead of waiting for standard idle timer.",
+        "description": "Lock the screen when you walk away, instead of waiting for the standard idle timer.",
         "defaultValue": true
+      },
+      {
+        "key": "lockDelaySeconds",
+        "type": "number",
+        "label": "Lock Delay (seconds)",
+        "description": "Countdown between 'phone left' and the screen locking; a notification offers a 'Keep unlocked' button during it. 0 locks immediately.",
+        "defaultValue": 10
       },
       {
         "key": "notifyOnStateChange",

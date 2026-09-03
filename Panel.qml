@@ -39,6 +39,12 @@ Panel {
   readonly property int pollIntervalSeconds: Math.max(root.scanWindowSeconds + 4, parseInt(setting("pollIntervalSeconds", 10), 10) || 10)
   readonly property int awayGraceCount: Math.max(1, parseInt(setting("awayGraceCount", 3), 10) || 3)
   readonly property bool immediateLock: setting("immediateLock", true) !== false
+  // Seconds between "phone left" and the screen locking, during which a
+  // notification offers a "Keep unlocked" button. 0 = lock straight away.
+  readonly property int lockDelaySeconds: {
+    var v = parseInt(setting("lockDelaySeconds", 10), 10)
+    return isNaN(v) ? 10 : Math.max(0, v)
+  }
   readonly property bool notifyOnStateChange: setting("notifyOnStateChange", true) !== false
   readonly property bool pluginEnabled: setting("enabled", true) !== false
 
@@ -134,6 +140,7 @@ Panel {
   // no matter how many monitors (and therefore widget copies) exist.
   function applyTransition(nowNear) {
     if (nowNear) {
+      pendingLockTimer.stop()
       runHelper("--stay-awake")
       if (root.notifyOnStateChange)
         // execArgv, not bar.run: bar.run() feeds the string to `bash -lc`.
@@ -141,12 +148,42 @@ Panel {
         // later edit that interpolates a device name (attacker-controlled
         // Bluetooth advertising data) can't become command execution.
         Util.execArgv(["omarchy-notification-send", "📱 Phone in range", "Screen kept awake"])
+    } else if (root.immediateLock && root.lockDelaySeconds > 0) {
+      // Count down, and give the user a way to wave it off.
+      pendingLockTimer.restart()
+      if (root.notifyOnStateChange)
+        Util.execArgv(["omarchy-notification-send", "📱 Phone away",
+                       "Locking the screen in " + root.lockDelaySeconds + " s",
+                       "-t", String(root.lockDelaySeconds * 1000),
+                       "--exec", "omarchy-shell", "-q", root.moduleName, "keepUnlocked"])
     } else {
       runHelper(root.immediateLock ? "--lock" : "--allow-idle")
       if (root.notifyOnStateChange)
         Util.execArgv(["omarchy-notification-send", "📱 Phone away",
                        root.immediateLock ? "Screen locked" : "Screen will lock when idle"])
     }
+  }
+
+  // Fires lockDelaySeconds after the phone leaves, unless the notification's
+  // "Keep unlocked" button was tapped (Model.lockDismissedWithin) or the phone
+  // came back (applyTransition(true) stops the timer).
+  Timer {
+    id: pendingLockTimer
+    interval: Math.max(1, root.lockDelaySeconds) * 1000
+    repeat: false
+    onTriggered: {
+      if (root.pluginEnabled && !root.deviceMissing
+          && !Model.lockDismissedWithin(root.lockDelaySeconds * 1000 + 3000))
+        root.runHelper("--lock")
+    }
+  }
+
+  // Called from the "away" notification's action button (via the keepUnlocked
+  // IPC verb). Stops this copy's countdown and records the dismissal in shared
+  // state so the lease holder's countdown honours it too.
+  function keepUnlocked() {
+    Model.noteLockDismissed()
+    pendingLockTimer.stop()
   }
 
   // The probe writes its result to stateFilePath; every widget copy (one per
@@ -159,6 +196,7 @@ Panel {
     // it, drop any stay-awake hold we had for it, but never lock — the user
     // didn't walk away, they changed a Bluetooth setting.
     if (data.status === "not_found" || data.status === "no_device") {
+      pendingLockTimer.stop()
       if (!root.deviceMissing && root.isNear && Model.holdsPollLease(root.instanceId))
         root.runHelper("--allow-idle")
       root.deviceMissing = true
@@ -259,6 +297,7 @@ Panel {
     // Manual lock: just lock. Unlike the automatic away-transition it leaves
     // the stay-awake state untouched, so coming straight back and unlocking
     // doesn't leave the idle timer disarmed.
+    pendingLockTimer.stop()
     Util.execArgv(["omarchy-system-lock"])
     root.close()
   }

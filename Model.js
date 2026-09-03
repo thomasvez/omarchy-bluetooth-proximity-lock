@@ -37,6 +37,18 @@ function holdsPollLease(id) {
   return _leaseHolder === id
 }
 
+// A pending lock can be waved off from the "away" notification's action
+// button. That click lands on whichever widget copy owns the IPC handler,
+// which need not be the copy running the countdown — so, like the lease, the
+// "cancelled" signal lives in the shared library state.
+var _lockDismissedAt = 0
+function noteLockDismissed() {
+  _lockDismissedAt = Date.now()
+}
+function lockDismissedWithin(ms) {
+  return _lockDismissedAt > 0 && (Date.now() - _lockDismissedAt) <= ms
+}
+
 function plainText(str) {
   if (str === null || str === undefined) return ""
   return String(str).replace(/<[^>]*>/g, "")

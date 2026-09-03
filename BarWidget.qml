@@ -83,6 +83,9 @@ BarWidget {
     function calibrate(): void {
       if (panelLoader.item && panelLoader.item.calibrate) panelLoader.item.calibrate()
     }
+    function keepUnlocked(): void {
+      if (panelLoader.item && panelLoader.item.keepUnlocked) panelLoader.item.keepUnlocked()
+    }
     function status(): string {
       return JSON.stringify({
         enabled: root.pluginEnabled,

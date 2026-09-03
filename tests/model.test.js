@@ -16,7 +16,8 @@ function loadModel () {
   const names = [
     'plainText', 'deviceGlyph', 'isProximityToken', 'rssiToPercent', 'rssiToBars',
     'tooltipMessage', 'statusBadgeColor', 'signalBarsIcon',
-    'claimPollLease', 'releasePollLease', 'holdsPollLease'
+    'claimPollLease', 'releasePollLease', 'holdsPollLease',
+    'noteLockDismissed', 'lockDismissedWithin'
   ]
   // eslint-disable-next-line no-new-func
   return new Function(`${src}\nreturn { ${names.join(', ')} }`)()
@@ -94,4 +95,12 @@ test('poll lease is single-holder with a TTL takeover', () => {
   M.releasePollLease('B')
   assert.equal(M.holdsPollLease('B'), false)
   assert.equal(M.claimPollLease('C', 5000), true) // free again immediately
+})
+
+test('lock dismissal is a recent-timestamp flag shared across copies', () => {
+  const M = loadModel()
+  assert.equal(M.lockDismissedWithin(10000), false) // never dismissed
+  M.noteLockDismissed()
+  assert.equal(M.lockDismissedWithin(10000), true) // just now
+  assert.equal(M.lockDismissedWithin(-1), false) // impossible window
 })
