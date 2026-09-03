@@ -161,15 +161,19 @@ Panel {
   }
 
   // Send (or, once lockNotifId is known, update) the away notification.
-  //   secondsLeft > 0  -> "Locking in N s" with a Keep-unlocked action
+  //   secondsLeft > 0  -> countdown; clicking the toast keeps the screen unlocked
   //   secondsLeft <= 0 -> a short terminal message (title/body), no action
+  //
+  // Omarchy toasts have no separate action button — the whole notification is
+  // the click target, wired here via --exec. The body says so.
   function sendAwayNotification(secondsLeft, title, body) {
     if (!root.notifyOnStateChange) return
-    var cmd = ["omarchy-notification-send"]
+    var cmd = ["omarchy-notification-send", "-g", "󰦞"]
     if (root.lockNotifId !== "") cmd.push("-r", root.lockNotifId)
     cmd.push("-p")
     if (secondsLeft > 0) {
-      cmd.push("📱 Phone away", "Locking the screen in " + secondsLeft + " s",
+      cmd.push("📱 Locking in " + secondsLeft + " s",
+               "Phone out of range — click to keep the screen unlocked",
                "-t", "1500",
                "--exec", "omarchy-shell", "-q", root.moduleName, "keepUnlocked")
     } else {
