@@ -116,7 +116,16 @@ Panel {
 
   // Where the probe writes its latest result. Per-user (runtime dir), one file
   // for the plugin; every widget copy watches it so their displays agree.
-  readonly property string stateFilePath: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/omarchy-proximity.json"
+  // Must resolve to the same private directory proximity-probe.py's
+  // runtime_dir() picks — never /tmp (a world-writable state file lets another
+  // local user spoof presence). The probe creates the dir if it's missing.
+  readonly property string runtimeDir: {
+    var x = Quickshell.env("XDG_RUNTIME_DIR")
+    if (x) return x
+    var c = Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") + "/.cache")
+    return c + "/omarchy-proximity"
+  }
+  readonly property string stateFilePath: root.runtimeDir + "/omarchy-proximity.json"
 
   // Injected by BarWidget.qml: the bar button this popup anchors to, and the
   // bar-widget root that stands in as the popout identity. The bar tracks the
@@ -442,14 +451,19 @@ Panel {
   }
 
   function applyCalibration(data) {
-    if (data.status === "ok") {
+    if (data.status === "ok" && data.strongest > -78) {
       root.updateSetting("rssiThreshold", data.threshold)
       if (root.notifyOnStateChange)
         Util.execArgv(["omarchy-notification-send", "📡 Proximity calibrated",
                        "Threshold set to " + data.threshold + " dBm (" + data.median + " dBm where you sit)"])
+    } else if (data.status === "ok") {
+      // Even the best reading was weak — applying this would just set a
+      // threshold so low the screen never locks. Don't.
+      Util.execArgv(["omarchy-notification-send", "📡 Signal too weak to calibrate",
+                     "Best reading was " + data.strongest + " dBm. Move the device closer to where you sit, or check the computer's Bluetooth, then try again."])
     } else {
       Util.execArgv(["omarchy-notification-send", "📡 Calibration failed",
-                     "Couldn't hear the phone — keep it nearby with Bluetooth on and try again"])
+                     "Couldn't hear the device — keep it nearby with Bluetooth on and try again"])
     }
   }
 

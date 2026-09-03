@@ -1,6 +1,8 @@
 """Behaviour tests for scripts/proximity-probe.py — the proximity decision
 logic and the Bluetooth output parsing, with run_command faked."""
 
+import os
+
 import pytest
 from conftest import chg_line, ctl_info, dbus_props, probe
 
@@ -264,3 +266,41 @@ def test_probe_is_short_circuited_while_snoozed(bt, snooze_path):
     r = probe.probe_devices([MAC], scan_window=4)
     assert r["status"] == "snoozed" and r["near"] is True
     assert not any("scan" in c for c in bt.calls)  # never touched the radio
+
+
+# --- private file handling -----------------------------------------------
+
+def test_runtime_dir_falls_back_to_a_private_cache_dir(monkeypatch, tmp_path):
+    cache = tmp_path / "cache"
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    d = probe.runtime_dir()
+    assert d == os.path.join(str(cache), "omarchy-proximity")
+    assert (os.stat(d).st_mode & 0o777) == 0o700       # created 0700, not shared
+
+
+def test_source_has_no_tmp_fallback():
+    src = __import__("pathlib").Path(probe.__file__).read_text()
+    assert '"/tmp"' not in src and "'/tmp'" not in src
+
+
+def test_runtime_dir_prefers_xdg_runtime(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    assert probe.runtime_dir() == str(tmp_path)
+
+
+def test_write_private_refuses_a_symlink(tmp_path):
+    victim = tmp_path / "victim"
+    victim.write_text("important")
+    link = tmp_path / "link"
+    link.symlink_to(victim)
+    with pytest.raises(OSError):
+        probe._write_private(str(link), "clobbered")
+    assert victim.read_text() == "important"      # untouched
+
+
+def test_write_private_mode_is_600(tmp_path):
+    p = tmp_path / "f"
+    probe._write_private(str(p), "hi")
+    assert p.read_text() == "hi"
+    assert (os.stat(p).st_mode & 0o777) == 0o600

@@ -120,8 +120,30 @@ def get_device_info_ctl(mac):
 
 MAC_RE = re.compile(r"[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\Z")
 
-SNOOZE_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp",
-                          "omarchy-proximity-snooze")
+
+def runtime_dir():
+    """A private directory for this plugin's runtime files. XDG_RUNTIME_DIR
+    (0700, per-user) when it exists; otherwise ~/.cache/omarchy-proximity,
+    created 0700. Never /tmp — a world-writable state/snooze file lets another
+    local user spoof presence or disable the lock."""
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg and os.path.isdir(xdg):
+        return xdg
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    d = os.path.join(base, "omarchy-proximity")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
+
+
+SNOOZE_PATH = os.path.join(runtime_dir(), "omarchy-proximity-snooze")
+
+
+def _write_private(path, text):
+    """Write `text` to `path`, refusing to follow a symlink and never widening
+    permissions."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
 
 
 def snooze_until():
@@ -140,8 +162,7 @@ def set_snooze(minutes):
             os.remove(SNOOZE_PATH)
         return 0.0
     until = time.time() + minutes * 60
-    with open(SNOOZE_PATH, "w") as fh:
-        fh.write(str(until))
+    _write_private(SNOOZE_PATH, str(until))
     return until
 
 
@@ -346,9 +367,11 @@ def main():
         print(payload)
         if args.state_file:
             try:
+                parent = os.path.dirname(args.state_file)
+                if parent:
+                    os.makedirs(parent, mode=0o700, exist_ok=True)
                 tmp = args.state_file + ".tmp"
-                with open(tmp, "w") as fh:
-                    fh.write(payload)
+                _write_private(tmp, payload)
                 os.replace(tmp, args.state_file)
             except OSError:
                 pass

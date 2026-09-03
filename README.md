@@ -64,6 +64,10 @@ spoofed by someone in radio range, which would keep the idle lock suppressed
 after you've left. Keep a normal idle-lock timeout and lock-on-suspend as the
 real backstop.
 
+`onAwayCommand` / `onReturnCommand` are run through a shell — put only commands
+you trust there. Runtime state lives in a per-user directory (`$XDG_RUNTIME_DIR`,
+or `~/.cache/omarchy-proximity` when that is unset), never a world-writable one.
+
 ## Installation
 
 ```bash
