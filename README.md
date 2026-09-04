@@ -68,20 +68,33 @@ real backstop.
 you trust there. Runtime state lives in a per-user directory (`$XDG_RUNTIME_DIR`,
 or `~/.cache/omarchy-proximity` when that is unset), never a world-writable one.
 
+## Requirements
+
+- Omarchy 4 (Quattro) — the Quickshell-based bar
+- `bluez` / `bluetoothctl` and `glib2` / `gdbus` — ship with Omarchy
+- `python3` — ships with Omarchy
+- A phone paired over Bluetooth
+- *Optional:* whatever the `onAwayCommand` / `onReturnCommand` hooks call
+  (e.g. `playerctl`) — not installed by this plugin
+
 ## Installation
 
 ```bash
-./setup
+omarchy plugin add https://github.com/thomasvez/omarchy-bluetooth-proximity-lock
+omarchy plugin enable io.github.thomasvez.proximity
 ```
 
-This symlinks the plugin into `~/.config/omarchy/plugins/`, rescans, and
-enables it. Or manually:
+Or clone it yourself:
 
 ```bash
-ln -s "$PWD" ~/.config/omarchy/plugins/io.github.thomasvez.proximity
+git clone https://github.com/thomasvez/omarchy-bluetooth-proximity-lock \
+  ~/.config/omarchy/plugins/io.github.thomasvez.proximity
 omarchy-shell shell rescanPlugins
 omarchy plugin enable io.github.thomasvez.proximity
 ```
+
+Then add the widget to the bar (`omarchy bar move`, or drag it in), pair your
+phone, and pick it in the panel.
 
 ### Pair your phone
 
@@ -94,6 +107,26 @@ bluetoothctl trust <PHONE_MAC>
 
 Then click the phone icon in the top bar and select your phone from the
 paired-devices list.
+
+## Removing
+
+```bash
+omarchy plugin disable io.github.thomasvez.proximity
+omarchy plugin remove io.github.thomasvez.proximity
+```
+
+Or by hand:
+
+```bash
+omarchy plugin disable io.github.thomasvez.proximity
+rm -rf ~/.config/omarchy/plugins/io.github.thomasvez.proximity
+omarchy-shell shell rescanPlugins
+```
+
+The plugin's settings live in the widget's entry in
+`~/.config/omarchy/shell.json`; delete that entry if you also removed it from
+the bar. Runtime files in `$XDG_RUNTIME_DIR` (or `~/.cache/omarchy-proximity`)
+are cleared on logout.
 
 ## Configuration
 
