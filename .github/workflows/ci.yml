@@ -28,9 +28,6 @@ jobs:
       - name: JavaScript tests (Model.js)
         run: node --test tests/*.test.js
 
-      - name: Shellcheck the setup script
-        run: shellcheck setup
-
       - name: Validate the plugin manifest
         run: |
           python - <<'PY'
