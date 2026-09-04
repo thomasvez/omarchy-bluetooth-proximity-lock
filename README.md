@@ -68,6 +68,8 @@ real backstop.
 you trust there. Runtime state lives in a per-user directory (`$XDG_RUNTIME_DIR`,
 or `~/.cache/omarchy-proximity` when that is unset), never a world-writable one.
 
+Full threat model and how to report a vulnerability: [SECURITY.md](SECURITY.md).
+
 ## Requirements
 
 - Omarchy 4 (Quattro) — the Quickshell-based bar
